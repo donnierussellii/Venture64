@@ -1,0 +1,4343 @@
+// Venture64 (c) 2022 Donnie Russell II
+// This source code is provided for personal, educational use only.
+// You are welcome to use this source code to develop your own works.
+
+
+
+import stdio
+import keyboard
+import cbm_file
+
+// see generate_data.cpp
+
+import venture_maps
+import venture_characters
+import venture_sprites
+import venture_spriteboxes
+import venture_dissolve
+
+
+
+#define HIGH_SCORE_SUPPORT = 1
+
+const byte GodModeOff = 1
+
+
+
+
+byte NumPlayers
+byte Player
+
+
+
+byte Level
+byte LevelMod9
+
+array(byte) TotalScore[8]
+array(byte) LevelScore[8]
+
+byte Lives
+
+word BonusTimer
+byte BonusMult
+
+// 9 levels per set of treasures (36)
+// 4 treasures per level
+// 1 bit per treasure packed into byte
+array(byte) TreasureCollected[9]
+
+
+
+byte SavedLevel
+byte SavedLevelMod9
+
+array(byte) SavedTotalScore[8]
+array(byte) SavedLevelScore[8]
+
+byte SavedLives
+
+word SavedBonusTimer
+byte SavedBonusMult
+
+array(byte) SavedTreasureCollected[9]
+
+
+
+// level difficulty parameters
+
+word HallmonsterSpeed
+word RoomMonsterSpeed
+
+byte MovingWallsCycleTime
+byte MovingWallsPauseTime
+word MovingWallsSpeed
+
+word HallmonsterAppearTime
+word HallmonsterChaseTime
+word HallmonsterChaseSpeed
+
+
+
+array(int24) SpriteX[8]
+array(word)  SpriteY[8]
+array(byte)  SpriteShape[8]
+array(byte)  SpriteDir[8]
+array(word)  SpriteCount[8]  // for arrow flight time, monster collision cooldown,
+                             // monster disintegration effect
+
+byte EnabledSprites
+
+byte Map  // 0-2 hallway  3-14 room
+
+byte MonsterDodgeSide        // randomizes with each arrow shot
+
+byte MonsterTimer
+byte MonsterAnim
+byte MonsterDead  // bits 2-6 for each of 5 monsters
+
+byte MonsterShape
+
+byte HallmonsterFreeze
+
+byte TeleportingMonster  // sprite # of random cyclops
+
+word HallmonsterCount
+byte HallmonsterRoom   // last room hallmonster entered
+
+byte TreasureCounter  // non-zero when treasure picked up; counter is for blinking
+
+byte RoomEventFlag
+
+byte PlayerTurnCount
+
+byte PushedFlag
+
+int24 TransitionX1, TransitionX2
+word  TransitionY1, TransitionY2
+
+word GrowArrowDataIndex
+
+
+
+// constants
+
+const byte NumCharDefs = 252
+const byte NumSpriteDefs = 79
+
+const word PlayerSpeed = 256
+const word BonusTimerSpeed = word(60)*15  // 15 seconds per multiple
+const word ArrowCountTime = 64
+const byte PlayerTurnSpeed = 2  // 0 = no turn delay
+
+const byte PlayerShapes                = 0   // 0-7
+const byte NockedArrowShapes           = 8   // 8-15
+const byte MonsterShapes               = 16  // 16-59 (11 monsters, 4 shapes per monster)
+const byte MovingWallShapes            = 60  // 60-61
+const byte LargeHallmonsterShapes      = 62  // 62-63
+const byte SmallHallmonsterShapes      = 64  // 64-66
+const byte CutoutSmallPlayerShape      = 67
+const byte SmallPlayerShape            = 68
+const byte SmallArrowShape             = 69
+const byte ShrinkingPlayerShapes       = 70  // 70-72
+const byte VentureLetterShapes         = 73  // 73-78
+
+const byte GrowingArrowShape           = NumSpriteDefs
+const byte MonsterDisintegrationShapes = NumSpriteDefs+1  // 5 shapes
+
+
+
+//.............................................................................
+
+const pointer ProcPort  = $1
+const pointer Screen    = $c000
+const pointer RAMChar   = $c800
+const pointer Vic       = $d000
+const pointer Sid       = $d400
+const pointer ROMChar   = $d000
+const pointer SpriteRAM = $e000
+const pointer Joystick  = $dc00
+
+
+
+const byte NumMapSymbols = 47
+const byte MapSkipChar   = 46
+
+
+
+// 28
+const array(byte) MapColor =
+[
+  4,3,7, 4,4,4,4, 3,3,3,3, 7,7,7,7,
+         4,4,4,4, 3,3,3,3, 7,7,7,7,
+                  3
+]
+
+
+
+// 15
+const array(byte) MapTextColor =
+[
+  3,7,4, 3,3,3,3, 7,7,7,7, 4,4,4,4
+]
+
+
+
+// 2*5*3
+const array(word) MonsterStartPosMap0To2 =
+[
+   31, 64,   103, 56,   135, 80,    87,120,   147,128,  // map 0
+  127, 48,    63,112,   207,104,    31,120,    15,128,  // map 1
+   23, 72,    71, 80,   231, 96,    95,112,   143,144   // map 2
+]
+
+
+
+// 2*5*12
+const array(byte) MonsterStartPosMap3To14 =
+[
+  115, 44,    97, 98,   173, 98,   115,177,     0,  0,  // map  3   (0,0) = unused
+  183, 56,   199,112,   183,144,     0,  0,     0,  0,  // map  4
+   32, 72,    63,120,   143,128,     0,  0,     0,  0,  // map  5
+  143, 72,   215,112,   111,152,     0,  0,     0,  0,  // map  6
+   47, 64,    80, 52,   176, 55,   207, 72,     0,  0,  // map  7
+   76, 48,   199, 32,   159,104,     0,  0,     0,  0,  // map  8
+   96,104,   128,124,   158,104,    36,104,   221,107,  // map  9
+   87, 96,   143,104,   178,142,    71,160,     0,  0,  // map 10
+  199, 72,   178,107,   199,144,     0,  0,     0,  0,  // map 11
+  127, 87,   159, 95,    96,118,     0,  0,     0,  0,  // map 12
+   71, 88,   151,104,   207,128,     0,  0,     0,  0,  // map 13
+   64, 80,   168, 80,   130,112,     0,  0,     0,  0   // map 14
+]
+
+
+
+// 5*12
+const array(byte) MonsterColorMap3To14 =
+[
+  2, 2, 2, 2, 0,  // map  3   0 = unused
+  5, 5, 5, 0, 0,  // map  4
+  3, 3, 3, 0, 0,  // map  5
+  1, 1, 1, 0, 0,  // map  6
+  2, 2, 2, 2, 0,  // map  7
+  1, 1, 1, 0, 0,  // map  8
+  2, 2, 2, 7, 7,  // map  9
+  7, 1, 1, 7, 0,  // map 10
+  4, 4, 4, 0, 0,  // map 11
+  7, 7, 1, 0, 0,  // map 12
+  2, 2, 2, 0, 0,  // map 13
+  3, 3, 3, 0, 0   // map 14
+]
+
+
+
+// 4
+const array(byte) MonsterAnimOffset =
+[
+  0, 1, 2, 1
+]
+
+
+
+// 12
+const array(byte) TreasureColor =
+[
+  1, 4, 7, 3, 1, 7, 4, 3, 1, 4, 2, 3
+]
+
+
+
+// 12
+const array(word) TreasurePos =
+[
+  40*12 + 19,
+  40*19 + 29,
+  40*18 +  9,
+  40*19 +  9,
+  40*18 + 21,
+  40* 4 + 30,
+  40*12 + 19,
+  40* 5 + 18,
+  40* 8 +  8,
+  40*17 + 19,
+  40* 8 +  7,
+  40*16 + 19
+]
+
+
+
+// 2*4*4*3
+const array(byte) RoomEnterPos =
+[
+// left    right       up     down
+
+   5, 5,   10, 4,    0, 0,    0, 0,  // map 0  (0,0) = no door
+  18, 4,   27, 4,    0, 0,    0, 0,
+   0, 0,   12,18,    7, 9,    0, 0,
+   0, 0,   28,13,    0, 0,   21,13,
+
+   3, 3,   11, 3,    0, 0,    0, 0,  // map 1
+   0, 0,    0, 0,    0, 0,   24, 7,
+   3,16,   29,16,    0, 0,    0, 0,
+   0, 0,    0, 0,    0, 0,   16,10,
+
+   0, 0,    0, 0,   26, 2,   23, 7,  // map 2
+  14, 7,    0, 0,    0, 0,    0, 0,
+   0, 0,    0, 0,   10,13,    7,18,
+   0, 0,    0, 0,   24,12,    0, 0
+]
+
+
+
+// 2*4*12
+const array(byte) RoomExitPos =
+[
+// left    right       up     down
+
+   2, 9,   28,10,    0, 0,    0, 0,  // map  3   (0,0) = no door
+   3, 6,   28, 6,    0, 0,    0, 0,  // map  4
+   0, 0,   29,16,   13, 1,    0, 0,  // map  5
+   0, 0,   29, 5,    0, 0,   12, 9,  // map  6
+
+   1, 4,   29, 4,    0, 0,    0, 0,  // map  7
+   0, 0,    0, 0,    0, 0,   14,20,  // map  8
+   1,10,   29,10,    0, 0,    0, 0,  // map  9
+   0, 0,    0, 0,    0, 0,   14,20,  // map 10
+
+   0, 0,    0, 0,   19, 1,   21,20,  // map 11
+   9, 3,    0, 0,    0, 0,    0, 0,  // map 12
+   0, 0,    0, 0,   25, 1,   16,20,  // map 13
+   0, 0,    0, 0,   12, 1,    0, 0   // map 14
+]
+
+
+
+// 2*4
+const array(byte) RoomEnterOffset =
+[
+  128 +(20-1), 128+8*2 +11,
+  128 -( 4+1), 128+8*2 +13,
+  128 +(13-1), 128+8*2 +20,
+  128 +(11-1), 128+8*2 - 4
+]
+
+
+
+// 2*4
+const array(byte) RoomExitOffset =
+[
+  128 -( 2+1), 128+8*2 + 5,
+  128 +(10-1), 128+8*2 + 3,
+  128 +( 3-1), 128+8*2 - 2,
+  128 +( 5-1), 128+8*2 +10
+]
+
+
+
+// joy is 1|2|4|8; dir is 0-7 (n,ne,e,se,s,sw,w,nw); 8 = no dir
+// 16
+const array(byte) JoyToDir =
+[
+  8, 8, 8, 8, 8, 3, 1, 2, 8, 5, 7, 6, 8, 4, 0, 8
+]
+
+
+
+// 2*4
+const array(word) HallmonsterCornerPos =
+[
+    0+7,    16+7,
+  256-9,    16+7,
+    0+7, 40*24-8,
+  256-9, 40*24-8
+]
+
+
+
+const array(byte) ArrowCollisionOffset =
+[
+  128+0, 128-8,
+  128+8, 128-8,
+  128+8, 128+0,
+  128+8, 128+8,
+  128+0, 128+8,
+  128-8, 128+8,
+  128-8, 128+0,
+  128-8, 128-8
+]
+
+
+
+// 11*12
+const array(byte) MonsterName =
+[
+  "wall{nullchar}      ",
+  "serpent{nullchar}   ",
+  "goblin{nullchar}    ",
+  "skeleton{nullchar}  ",
+  "two headed{nullchar}",
+  "troll{nullchar}     ",
+  "spider{nullchar}    ",
+  "dragon{nullchar}    ",
+  "demon{nullchar}     ",
+  "bat{nullchar}       ",
+  "genie{nullchar}     ",
+  "cyclops{nullchar}   "
+]
+
+
+
+// NTSC
+// 12*8
+const array(word) NoteFreq =
+[
+  268,284,301,319,338,358,379,402,426,451,478,506,
+  536,568,602,638,676,716,759,804,852,892,956,1013,
+  1073,1137,1204,1276,1352,1432,1517,1608,1703,1804,1912,2025,
+  2146,2274,2409,2552,2704,2864,3035,3215,3406,3609,3824,4051,
+  4292,4547,4817,5104,5407,5729,6070,6430,6813,7218,7647,8102,
+  8584,9094,9635,10208,10815,11458,12139,12861,13626,14436,15294,16204,
+  17167,18188,19270,20415,21629,22916,24278,25722,27251,28872,30589,32407,
+  34334,36376,38539,40831,43259,45831,48556,51444,54503,57743,61177,64815
+]
+
+
+
+const array(byte) Music1 =
+[
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   3+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   0+12, 23,  1,
+   7   , 48,  6,
+   7   ,  5,  1,
+   0+12,  5,  1,
+   3+12,  5,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   3+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   0+12, 72,  6,
+   7   ,  5,  1,
+   0+12,  5,  1,
+   3+12,  5,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   3+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   0+12, 23,  1,
+   7   , 48,  6,
+   7   ,  5,  1,
+   0+12,  5,  1,
+   3+12,  5,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   2+12, 11,  1,
+   0+12, 72, 24,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  1,
+   7+12,  5,  1,
+   8+12,  5,  1,
+   7+12,  5,  1,
+   6+12,  5,  200,
+  0,0,0
+]
+
+
+
+const array(byte) Music2 =
+[
+   0+12, 11,  1,
+   2+12, 11,  1,
+   3+12, 23,  1,
+   2+12, 23,  1,
+   0+12, 23,  1,
+   0+12, 11,  1,
+   2+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   2+12, 11,  1,
+   0+12, 11,  1,
+   2+12, 11,  1,
+   0+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   2+12, 11,  1,
+   2+12, 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   4   , 11,  1,
+   4   , 11,  1,
+  11   , 23,  1,
+   5   , 11,  1,
+   7   , 11,  1,
+   9   , 11,  1,
+   7   , 11,  1,
+   9   , 11,  1,
+  11   , 11,  1,
+   7+12, 11,  1,
+   8+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   2+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   2+12, 11,  1,
+   0+12, 11,  1,
+   3+12, 11,  1,
+   2+12, 11,  1,
+   0+12, 11,  1,
+  10   , 11,  1,
+   8   , 11,  1,
+  10   , 11,  1,
+   0+12, 11,  1,
+   2+12, 11,  1,
+   3+12, 11,  1,
+   2+12, 11,  1,
+   3+12, 11,  1,
+   5+12, 11,  200,
+  0,0,0
+]
+
+
+
+const array(byte) Music3 =
+[
+   0+24, 11,  1,
+   0+24, 11,  1,
+  10+12, 11,  1,
+  11+12, 11,  1,
+   0+24, 23,  1,
+   3+12, 23,  1,
+   3+12, 23,  1,
+   0+24, 11,  1,
+   7+12, 11,  1,
+  10+12, 11,  1,
+   0+24, 11,  1,
+  10+12, 11,  1,
+   5+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   6+12, 11,  1,
+   7+12, 23,  1,
+  11   , 23,  1,
+  11   , 23,  1,
+   7+12, 11,  1,
+   2+12, 11,  1,
+   5+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+   0+24, 11,  1,
+   0+24, 11,  1,
+  10+12, 11,  1,
+  11+12, 11,  1,
+   0+24, 23,  1,
+   3+12, 23,  1,
+   3+12, 23,  1,
+   0+24, 11,  1,
+   7+12, 11,  1,
+  10+12, 11,  1,
+   0+24, 11,  1,
+  10+12, 11,  1,
+   5+12, 11,  1,
+   7+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   6+12, 11,  1,
+   7+12, 23,  1,
+  11   , 23,  1,
+  11   , 23,  1,
+   7+12, 11,  1,
+   2+12, 11,  1,
+   5+12, 11,  1,
+   7+12, 11,  1,
+   5+12, 11,  1,
+   3+12, 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+   9   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+  10   , 11,  1,
+   7   , 11,  1,
+  10   , 11,  1,
+   7   , 11,  1,
+  10   , 11,  1,
+   7   , 11,  1,
+  10   , 11,  1,
+   7   , 11,  200,
+  0,0,0
+]
+
+
+
+const array(byte) Music4 =
+[
+   8   ,  5,  1,
+  10   ,  5,  1,
+  11   ,  5,  1,
+   1+12,  5,  1,
+   3+12, 11, 13,
+   8   ,  5,  1,
+  10   ,  5,  1,
+  11   ,  5,  1,
+   1+12,  5,  1,
+   3+12, 11, 13,
+   8   ,  5,  1,
+  10   ,  5,  1,
+  11   ,  5,  1,
+   1+12,  5,  1,
+   4+12,  5,  1,
+   1+12,  5,  1,
+   3+12,  5,  1,
+  11   ,  5,  1,
+   1+12,  5,  1,
+  10   ,  5,  1,
+  11   ,  5,  1,
+   8   ,  5,  1,
+  10   ,  5,  1,
+   6   ,  5,  1,
+   8   ,  5,  1,
+   4   ,  5,  1,
+   6   ,  5,  1,
+   3   ,  5,  1,
+   4   ,  5,  1,
+   1   ,  5,  1,
+   3   , 71,  1,
+   3   ,  5,  1,
+   1   ,  5,  1,
+   6   ,  5,  1,
+   4   ,  5,  1,
+   3   , 71,  1,
+   3   ,  5,  1,
+   1   ,  5,  1,
+   4   ,  5,  1,
+   1   ,  5,  1,
+   3   , 11, 13,
+   3   , 11, 13,
+   3   , 11, 13,
+   3   , 11, 13,
+   4+12, 11,  1,
+   4+12, 11,  1,
+   1+12, 11,  1,
+   1+12, 11,  1,
+   3+12, 11,  1,
+   3+12, 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+   1+12, 11,  1,
+   1+12, 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  11   , 47,  1,
+   1+12, 11,  1,
+   1+12, 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+  11   , 11,  1,
+  11   , 11,  1,
+   8   , 11,  1,
+   8   , 11,  1,
+  10   , 11,  1,
+  10   , 11,  1,
+   7   , 11,  1,
+   7   , 11,  1,
+   8   , 47,  200,
+  0,0,0
+]
+
+
+
+const array(byte) Music5 =
+[
+  10   , 11+2, 1,
+  11   ,  5+2, 1,
+  11   ,  5+2, 1,
+  11   , 11+2, 1,
+  11   ,  5+2, 1,
+  11   ,  5+2, 1,
+  11   , 11+2, 1,
+   4+12,  5+2, 1,
+   4+12,  5+2, 1,
+   4+12, 11+2, 1,
+   4+12,  5+2, 1,
+   4+12,  5+2, 1,
+   4+12, 11+2, 1,
+   2+12,  5+2, 1,
+   2+12,  5+2, 1,
+   2+12, 11+2, 1,
+   1+12,  5+2, 1,
+   1+12,  5+2, 1,
+   1+12, 11+2, 1,
+  11   ,  5+2, 1,
+  11   ,  5+2, 1,
+  11   , 11+2, 1,
+  11   ,  5+2, 1,
+  11   ,  5+2, 1,
+  11   , 11+2, 1,
+  11   ,  5+2, 1,
+  11   ,  5+2, 1,
+  11   , 11+2, 1,
+   3+12, 11+2, 1,
+   3+12, 11+2, 1,
+   4+12,  5+2, 1,
+   4+12,  5+2, 1,
+   4+12, 11+2, 1,
+   4+12, 11+2, 1,
+   4+12, 11+2, 1,
+   2+12,  5+2, 1,
+   4+12,  5+2, 1,
+   2+12, 11+2, 1,
+   1+12, 11+2, 1,
+   1+12,  5+2, 1,
+  11   , 49+2, 200,
+  0,0,0
+]
+
+
+
+const array(byte) Music6 =
+[
+  0+12,  5, 1,
+  0+12,  5, 1,
+  0+12, 11, 1,
+  0+12,  5, 1,
+  0+12,  5, 1,
+  0+12, 11, 1,
+  0+12,  5, 1,
+  0+12,  5, 1,
+  5+12, 11, 1,
+  7+12, 11, 1,
+  9+12, 11, 1,
+  0+12,  5, 1,
+  0+12,  5, 1,
+  0+12, 11, 1,
+  0+12,  5, 1,
+  0+12,  5, 1,
+  5+12, 11, 1,
+  9+12, 11, 1,
+  7+12, 11, 1,
+  4+12, 11, 1,
+  0+12, 23, 200,
+  0,0,0
+]
+
+
+
+const array(byte) Music7 =
+[
+   0+12,  5+3, 1,
+   5+12,  5+3, 1,
+   9+12,  5+3, 1,
+   0+24,  5+3, 1,
+   9+12,  5+3, 1,
+   5+12,  5+3, 1,
+   4+12, 22+3, 1+10,
+   9+12,  5+3, 1,
+   7+12,  5+3, 1,
+  10+12, 11+3, 1,
+  10+12,  5+3, 1,
+  10+12,  5+3, 1,
+   9+12,  5+3, 1,
+   7+12,  5+3, 1,
+   9+12, 22+3, 200,
+  0,0,0
+]
+
+
+
+const array(byte) Music8 =
+[
+  10   , 11,   1,
+   3+12, 11,   1,
+   7+12, 11,   1,
+  10+12, 11,  13,
+   7+12, 11,   1,
+  10+12, 72, 200,
+  0,0,0
+]
+
+
+
+const array(byte) Music9 =
+[
+  1, 23, 5,
+  0, 23, 5,
+  0,0,0
+]
+
+
+
+const array(word) SoundData =
+[
+// dur  start     step        slide     rev
+
+    3,   6020, 32768 -1888, 32768 -   0, 0,  // arrow
+    6,   5320, 32768 - 184, 32768 - 100, 1,  // monster dies
+    2,  10220, 32768 +2736, 32768 + 200, 1,  // extra life
+    7,   2120, 32768 + 240, 32768 - 100, 0,  // player died
+    7,   8700, 32768 -3705, 32768 +1000, 0,  // enter room
+    7,  12000, 32768 -3705, 32768 -1000, 0,  // exit room
+    2,  12100, 32768 -6570, 32768 + 100, 1,  // bonus multiple
+    2,   2560, 32768 - 400, 32768 +  20, 1   // stair step
+]
+
+
+
+array(word) GrowArrowDataStart =
+[
+  0,
+  48,
+  94,
+  172,
+  218,
+  266,
+  312,
+  390
+]
+
+
+
+array(byte) GrowArrowData =
+[
+  1,8, 4,28, 63, 7,42, 63, 10,8, 63, 13,8, 63, 16,8, 63, 19,8, 63,
+  22,8, 63, 25,8, 63, 28,8, 63, 31,8, 63, 34,8, 63, 37,62, 63,
+  40,73, 63, 43,62, 63, 46,65, 63, 64,
+  
+  2,28, 5,12, 8,20, 11,32, 63, 14,64, 63, 17,128, 63, 19,1, 63,
+  22,2, 63, 25,4, 63, 25,52, 28,8, 31,4, 34,4, 63, 31,20, 63,
+  31,212, 34,36, 37,16, 40,16, 63, 64,
+  
+  26,8, 29,12, 32,8, 63, 23,16, 29,28, 35,16, 63, 29,60, 63,
+  29,124, 63, 29,252, 63, 28,1, 63, 28,3, 63, 
+  28,7, 63, 28,15, 63, 28,31, 63, 28,63, 63,
+  22,64, 25,64, 28,127, 31,64, 34,64, 63,
+  19,128, 28,255, 37,128, 63, 21,1, 24,1, 27,1, 30,1, 33,1, 63,
+  18,2, 27,3, 36,2, 63, 64,
+  
+  50,32, 53,20, 56,12, 59,28, 63, 47,64, 63, 44,128, 63,
+  40,1, 63, 37,2, 63, 34,4, 63, 25,4, 28,4, 31,8, 34,52, 63,
+  28,20, 63, 19,16, 22,16, 25,36, 28,212, 63, 64,
+  
+  55,28, 58,8, 63, 52,42, 63, 49,8, 63, 46,8, 63, 43,8, 63,
+  40,8, 63, 37,8, 63, 34,8, 63, 31,8, 63, 28,8, 63, 25,8, 63,
+  22,62, 63, 19,73, 63, 16,62, 63, 13,65, 63, 64,
+  
+  48,4, 51,40, 54,48, 57,56, 63, 45,2, 63, 42,1, 63, 40,128, 63,
+  37,64, 63, 34,32, 63, 25,32, 28,32, 31,16, 34,44, 63,
+  28,40, 63, 19,8, 22,8, 25,36, 28,43, 63, 64,
+  
+  27,16, 30,48, 33,16, 63, 24,8, 30,56, 36,8, 63, 30,60, 63,
+  30,62, 63, 30,63, 63, 31,128, 63, 31,192, 63, 31,224, 63,
+  31,240, 63, 31,248, 63, 31,252, 63, 
+  25,2, 28,2, 31,254, 34,2, 37,2, 63, 22,1, 31,255, 40,1, 63,
+  26,128, 29,128, 32,128, 35,128, 38,128, 63, 
+  23,64, 32,192, 41,64, 63, 64,
+  
+  0,56, 3,48, 6,40, 9,4, 63, 12,2, 63, 15,1, 63, 19,128, 63,
+  22,64, 63, 25,32, 63, 25,44, 28,16, 31,32, 34,32, 63,
+  31,40, 63, 31,43, 34,36, 37,8, 40,8, 63, 64
+]
+
+//.............................................................................
+
+
+
+//*****************************************************************************
+
+macro asm void WaitForVBlank()
+{
+  w1: bit $d011
+      bpl w1
+  w2: bit $d011
+      bmi w2 
+}
+
+
+
+void CopySpriteDefinitions()
+{
+  pointer r, d
+  byte s, i
+  int24 bits
+
+  r = SpriteRAM
+  d = SpriteDefinitions
+
+  for s,0,until,NumSpriteDefs
+  {
+    if ((s >= NockedArrowShapes   && s < NockedArrowShapes  +8) ||
+        (s >= MovingWallShapes    && s < MovingWallShapes   +2) ||
+        (s >= VentureLetterShapes && s < VentureLetterShapes+6))
+    {
+      for i,0,until,3*21
+        {r[i] = d[i]}
+      r += 64
+      d += 3*21
+    }
+    else
+    {
+      for i,0,until,3*2
+        {r[i] = 0}
+      r += 3*2
+
+      for i,0,until,16
+      {
+        bits.b0 = d[1]
+        bits.b1 = d[0]
+        bits.b2 = 0
+
+        bits <<= 4
+
+        r[0] = bits.b2
+        r[1] = bits.b1
+        r[2] = bits.b0
+
+        r += 3
+        d += 2
+      }
+
+      for i,0,until,3*3
+        {r[i] = 0}
+      r += 3*3+1
+    }
+  }
+
+//  for i,0,paralleluntil,word(64)*NumSpriteDefs
+//    {SpriteRAM[i] = SpriteDefinitions[i]}
+
+}
+
+
+
+void InitVic()
+{
+  word i
+  byte s
+
+  WaitForVBlank()
+
+  Vic[$20] = 0  // border color
+  Vic[$21] = 0  // background color 0
+
+  Vic[$11] &= (255-(1<<4))   // disable screen
+
+//  Vic[$C0E] &= (255-1)       // disable interrupts
+//  ProcPort[0] &= (255-4)     // character ROM visible at $D000-$DFFF
+//  for i,0,paralleluntil,4096
+//  {
+//    RAMChar[i] = ROMChar[i]  // copy char ROM to RAM
+//  }
+//  ProcPort[0] |= 4           // I/O area visible at $D000-$DFFF
+//  Vic[$C0E] |= 1             // enable interrupts
+
+  Vic[$11] &= (255-(1<<6));  // Control Reg 1 : ECM
+  Vic[$11] &= (255-(1<<5));  // Control Reg 1 : BMM
+  Vic[$16] &= (255-(1<<4));  // Control Reg 2 : MCM
+  Vic[$d02] |= 3             // Bank Direction
+  Vic[$d00] &= (255-3)       // Bank
+  Vic[$18] = 2               // Screen and RAMChar offsets within Bank
+
+  for i,0,paralleluntil,word(8)*NumCharDefs
+    {RAMChar[i] = CharDefinitions[i]}
+
+  CopySpriteDefinitions()
+
+  Vic[$15] = 0  // disable sprites
+  Vic[$1d] = 0  // disable sprites stretch x
+  Vic[$17] = 0  // disable sprites stretch y
+  Vic[$1c] = 0  // disable sprites multicolor mode
+  Vic[$1b] = 0  // disable sprites behind chars
+
+  ClearScreen()
+
+  WaitForVBlank()
+
+  Vic[$11] |= (1<<4)  // enable screen
+}
+
+
+
+void InitRandom()
+{
+  Sid[$0e] = 255  // voice 3 freq lo byte
+  Sid[$0f] = 255  // voice 3 freq hi byte
+  Sid[$12] = 128  // voice 3 control reg = noise waveform, gate bit off
+}
+
+
+
+byte GetRandom()
+{
+  return Sid[$1b]
+}
+
+
+
+void ClearScreen()
+{
+  byte i
+
+  for i,0,paralleluntil,250
+  {
+    Screen[i    ] = 0
+    Screen[i+250] = 0
+    Screen[i+500] = 0
+    Screen[i+750] = 0
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+// VALUE  ATTACK    DECAY   RELEASE
+//   0     2 ms      6 ms      6 ms
+//   1     8 ms     24 ms     24 ms
+//   2    16 ms     48 ms     48 ms
+//   3    24 ms     72 ms     72 ms
+//   4    38 ms    114 ms    114 ms
+//   5    56 ms    168 ms    168 ms
+//   6    68 ms    204 ms    204 ms
+//   7    80 ms    240 ms    240 ms
+//   8   100 ms     .3 sec    .3 sec
+//   9   .25 sec   .75 sec   .75 sec
+//  10    .5 sec   1.5 sec   1.5 sec
+//  11    .8 sec   2.4 sec   2.4 sec
+//  12     1 sec     3 sec     3 sec
+//  13     3 sec     9 sec     9 sec
+//  14     5 sec    15 sec    15 sec
+//  15     8 sec    24 sec    24 sec
+
+// Attack   Rise time to maximum volume.                          Gate = 1
+// Decay    Fall off time to decreased volume at sustain level.   Gate = 1
+// Sustain  Volume level that is held while the gate bit is set.  Gate = 1
+// Release  Fade out time of the tone.                            Gate = 0 
+
+
+
+// music and rumble play on channel 1
+
+
+
+pointer MusicData
+word MusicIndex
+byte MusicCounter
+byte MusicStage
+byte RumbleCount
+
+
+
+void ClearSID()
+{
+  byte i
+
+  for i,0,until,$1d
+    {Sid[i] = 0}
+}
+
+
+
+void InitMusic()
+{
+  MusicData = 0
+  MusicIndex = 0
+  MusicCounter = 0
+  MusicStage = 0
+  RumbleCount = 0
+
+  Sid[$05] = ( 0<<4)|0   // attack, decay
+  Sid[$06] = (10<<4)|0  // sustain, release
+}
+
+
+
+void PlayMusic(pointer m)
+{
+  Sid[$18] = 15  // main volume
+  Sid[$17] = 0   // filter off
+
+  Sid[$00] = 0  // freq lo
+  Sid[$01] = 0  // freq hi
+
+  // pulse width: 0-4095 (0-100% duty cycle); 2048 = square wave
+  Sid[$02] = 0  // pulse wave duty cycle voice 1 low byte
+  Sid[$03] = 8  // pulse wave duty cycle voice 1 high byte (bits 0-3)
+
+  MusicData = m
+  MusicIndex = 0
+  MusicCounter = 0
+  MusicStage = 0
+}
+
+
+
+void PlayRumble()
+{
+  Sid[$18] = 15|16  // main volume; low pass filter
+  Sid[$17] = 1      // filter channel 1
+
+  Sid[$00] = 0  // freq lo
+  Sid[$01] = 0  // freq hi
+
+  Sid[$15] = 0  // filter cutoff lo
+
+  Sid[$04] = 128|1  // noise, attack
+
+  MusicData = 65535
+  RumbleCount = 0
+}
+
+
+
+void StopMusic()
+{
+  Sid[$04] = 1  // attack
+
+  MusicData = 0
+}
+
+
+
+void ProcessMusic()
+{
+  byte i
+
+  if (MusicData == word(65535))
+  {
+    i = RumbleCount
+    if (i >= 128)
+      {i = 255-i}
+    i >>= 2
+
+    Sid[$01] = 5 +i  // freq hi
+    Sid[$16] = 10+i  // filter cutoff hi
+
+    RumbleCount += 1
+  }
+  else if (MusicData != word(0))
+  {
+    if (MusicCounter > 0)
+      {MusicCounter -= 1}
+    if (MusicCounter == 0)
+    {
+      if (MusicStage == 0)
+      {
+        Sid[$00] = NoteFreq[12*4 + MusicData[MusicIndex]].lo
+        Sid[$01] = NoteFreq[12*4 + MusicData[MusicIndex]].hi
+        Sid[$04] = 64|1  // square wave, attack
+        MusicCounter = MusicData[MusicIndex+1]
+        MusicStage = 1
+      }
+      else
+      {
+        Sid[$04] = 64  // square wave, release
+        MusicCounter = MusicData[MusicIndex+2]
+        MusicStage = 0
+
+        MusicIndex += 3
+        if (MusicData[MusicIndex+2] == 0)
+          {MusicIndex = 0}
+      }
+    }
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+// sound effects play on channel 2
+
+
+
+const byte SoundResetFrames = 3  // time necessary for adsr to reset
+
+
+
+byte SoundReset
+
+word SoundDur
+word SoundStart
+word SoundStep
+word SoundSlide
+word SoundRev
+
+word SoundFreq
+word SoundCount
+
+
+
+void InitSound()
+{
+  SoundReset = 0
+  SoundDur = 0
+}
+
+
+
+void PlaySound(byte i)
+{
+  byte j
+
+  j = i+(i<<2)  // 5*i
+
+  SoundDur   = SoundData[j+0]
+  SoundStart = SoundData[j+1]  
+  SoundStep  = SoundData[j+2]
+  SoundSlide = SoundData[j+3]
+  SoundRev   = SoundData[j+4]
+
+  Sid[$0c] = 0  // attack, decay
+  Sid[$0d] = 0  // sustain, release
+  Sid[$0b] = 8  // oscillator and gate off
+
+  SoundReset = SoundResetFrames
+}
+
+
+
+// necessary to prevent optimization interference
+noinline void SIDSet(byte offset, byte value)
+{
+  Sid[offset] = value
+}
+
+
+
+void ProcessSound()
+{
+  if (SoundReset > 0)
+  {
+    SoundReset -= 1
+    if (SoundReset == 0)
+    {
+      Sid[$0c] = ( 0<<4)|0   // attack, decay
+      Sid[$0d] = (12<<4)|10  // sustain, release
+    
+      Sid[$07] = SoundStart.lo  // freq
+      Sid[$08] = SoundStart.hi  // freq
+
+      SIDSet($0b, 32|1)  // sawtooth, attack
+      SIDSet($0b, 32)    // sawtooth, release
+
+      SoundCount = 0
+    }
+  }
+  else if (SoundDur > 0)
+  {
+    if (SoundCount == 0)
+    {
+      SoundFreq = SoundStart
+      SoundCount = SoundDur
+
+      SoundStart += SoundSlide - 32768
+
+      if (SoundRev != 0)
+      {
+        if (SoundStep < 32768)
+          {SoundStep = (32768-SoundStep)+32768}
+        else
+          {SoundStep = 32768-(SoundStep-32768)}
+      }
+    }
+
+    Sid[$07] = SoundFreq.lo  // freq
+    Sid[$08] = SoundFreq.hi  // freq
+
+    SoundFreq += SoundStep - 32768
+    SoundCount -= 1
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+void Pause(word ms)
+{
+  while (ms > 0)
+  {
+    WaitForVBlank()
+    ms -= 1
+
+    ProcessMusic()
+    ProcessSound()
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+void DrawMap(byte map, byte border)
+{
+  byte map_color, column, color, c, i
+  word s, m
+
+  map_color = MapColor[map]
+
+  s = 40*2+((40-32)>>1)
+  column = 0
+  m = MapDataOffset[map]
+
+  while (m < MapDataOffset[map+1])
+  {
+    c = MapData[m]
+    m += 1
+    if (c < NumMapSymbols)
+      {i = 1}
+    else
+    {
+      i = c-NumMapSymbols+1
+      c = MapData[m]
+      m += 1
+    }
+
+    if (c >= 26)  // door
+      {color = 1}
+    else
+      {color = map_color}
+
+    while (i > 0)
+    {
+      if (c != MapSkipChar)
+      {
+        Screen[s] = c
+        c64_color_ram[s] = color
+      }
+      s += 1
+      column += 1
+      if (column == 32)
+      {
+        s += 40-32;
+        column = 0
+      }
+      i -= 1
+    }
+  }
+
+  if (map < 3 && border != 0)
+  {
+    if (map == 0)
+      {color = 5}
+    else if (map == 1)
+      {color = 2}
+    else if (map == 2)
+      {color = 3}
+  
+    s = 40*2+((40-32)>>1)
+  
+    Screen       [s   ] = 14+3
+    c64_color_ram[s   ] = color
+    Screen       [s+31] = 14+2
+    c64_color_ram[s+31] = color
+  
+    Screen       [s+word(40)*21   ] = 14+1
+    c64_color_ram[s+word(40)*21   ] = color
+    Screen       [s+word(40)*21+31] = 14+0
+    c64_color_ram[s+word(40)*21+31] = color
+  
+    for i,0,until,30
+    {
+      Screen       [s            +1+i] = 14+4+3
+      c64_color_ram[s            +1+i] = color
+      Screen       [s+word(40)*21+1+i] = 14+4+2
+      c64_color_ram[s+word(40)*21+1+i] = color
+    }
+  
+    for i,0,until,20
+    {
+      s += 40
+      Screen       [s   ] = 14+4+1
+      c64_color_ram[s   ] = color
+      Screen       [s+31] = 14+4+0
+      c64_color_ram[s+31] = color
+    }
+  }
+}
+
+
+
+void PlaceSprites(byte pause)
+{
+  byte s, i
+  int24 x
+  word  y
+
+  Pause(1)
+
+  for s,0,until,8
+  {
+    if ((EnabledSprites & (1<<s)) != 0)
+    {
+      x = SpriteX[s]
+      y = SpriteY[s]
+  
+      x += (24+32-11)<<8
+      y += (50   -10)<<8  // top left of screen (24,50); center of 24x21 sprite
+  
+      Vic[$0+2*s] = x.b1
+      Vic[$10] = (Vic[$10] & (255-(1<<s))) | ((x.b2 & 1)<<s)
+      Vic[$1+2*s] = y.hi
+
+      Screen[1016+s] = byte(SpriteRAM>>6) + SpriteShape[s]
+    }
+  }
+
+  // pause before displaying monster sprites
+  if (Vic[$15] == 0)
+  {
+    Vic[$15] |= (EnabledSprites & 3)
+    Pause(pause)
+  }
+
+  Vic[$15] = EnabledSprites
+}
+
+
+
+void MoveSpriteX(byte s, byte dir, word speed)
+{
+  if (dir == 5 || dir == 6 || dir == 7)
+    {SpriteX[s] -= speed}
+  else if (dir == 1 || dir == 2 || dir == 3)
+    {SpriteX[s] += speed}
+}
+
+
+
+void MoveSpriteY(byte s, byte dir, word speed)
+{
+  if (dir == 0 || dir == 1 || dir == 7)
+    {SpriteY[s] -= speed}
+  else if (dir == 3 || dir == 4 || dir == 5)
+    {SpriteY[s] += speed}
+}
+
+
+
+void SetupMap()
+{
+  const array(pointer) m = [Music1, Music2, Music3, Music4]
+
+  byte  s, i, color
+  int24 x
+  word  y
+  word  pos
+
+  Pause(1)
+  Vic[$15] = 0  // disable sprites
+
+  DrawMap(Map, 1)
+
+  PrintRoomName()
+
+  if (Map < 3)
+  {
+    for i,0,until,4
+    {
+      if ((TreasureCollected[LevelMod9] & (1<<i)) != 0)
+        {DrawMap(15 + (Map<<2) + i, 0)}
+    }
+
+
+    SpriteShape[0] = CutoutSmallPlayerShape
+    Vic[$27+0] = 2
+
+    SpriteShape[1] = SmallArrowShape
+    SpriteCount[1] = 0
+    Vic[$27+1] = 7
+
+
+    if (Map == 0)
+      {color = 5}
+    else if (Map == 1)
+      {color = 2}
+    else if (Map == 2)
+      {color = 3}
+
+    for s,2,until,7
+    {
+      i = (Map<<1)+(Map<<3)  // 2*5*Map
+      i += (s-2)<<1
+      x = MonsterStartPosMap0To2[i+0]
+      y = MonsterStartPosMap0To2[i+1]
+      x <<= 8
+      y <<= 8
+      SpriteX[s] = x
+      SpriteY[s] = y
+
+      SpriteShape[s] = SmallHallmonsterShapes
+      SpriteDir[s] = 0
+      SpriteCount[s] = 0
+
+      Vic[$27+s] = color
+    }
+
+    Vic[$1d] = 0  // disable sprites stretch x
+    Vic[$17] = 0  // disable sprites stretch y
+
+    EnabledSprites = 1|2|4|8|16|32|64
+
+
+    HallmonsterFreeze = 20
+
+
+    PlayMusic(Music5)
+  }
+  else
+  {
+    Vic[$27+0] = 2
+
+    SpriteCount[1] = 0
+    Vic[$27+1] =  7
+
+    EnabledSprites = 1|2
+
+
+    MonsterShape = MonsterShapes + ((Map-4)<<2)
+
+    for s,2,until,7
+    {
+      i = Map-3
+      i = (i<<1)+(i<<3)  // 2*5*i
+      i += (s-2)<<1
+      x = MonsterStartPosMap3To14[i+0]
+      if (x != 0)
+      {
+        y = MonsterStartPosMap3To14[i+1]
+        x <<= 8
+        y <<= 8
+        SpriteX[s] = x
+        SpriteY[s] = y
+
+        if (Map == 3)  // moving walls room
+        {
+          if (s == 3 || s == 4)
+            {SpriteShape[s] = MovingWallShapes}
+          else
+            {SpriteShape[s] = MovingWallShapes+1}
+        }
+        else
+          {SpriteShape[s] = MonsterShape}
+
+        SpriteDir[s] = 0
+        SpriteCount[s] = 0
+
+        i = Map-3
+        i = i+(i<<2)  // 5*i
+        i += s-2
+        Vic[$27+s] = MonsterColorMap3To14[i]
+
+        EnabledSprites |= (1<<s)
+      }
+    }
+
+
+    if (Map == 7)                               // two headed room
+      {EnabledSprites &= 255-(4|8|16|32)}       // monsters appear when treasure taken
+    else if (Map == 9)                          // spider room
+      {EnabledSprites &= 255-(32|64)}           // monsters appear when treasure taken
+    else if (Map == 11)                         // demon room
+      {EnabledSprites &= 255-(4|8|16)}          // monsters appear when player moves past x
+    else if (Map == 14)                         // cyclops room
+    {
+      // 1 of 2 shot monsters teleports away and reappears when treasure picked up
+      // third monster is too close to treasure to be included
+      TeleportingMonster = 2+(GetRandom()&1)
+    }
+
+
+    // hallmonster
+
+    i = GetRandom() & 3
+    x = HallmonsterCornerPos[(i<<1)+0]
+    y = HallmonsterCornerPos[(i<<1)+1]
+    x <<= 8
+    y <<= 8
+    SpriteX[7] = x
+    SpriteY[7] = y
+
+    SpriteShape[7] = LargeHallmonsterShapes
+    SpriteDir[7] = 0
+    SpriteCount[7] = 0
+
+    Vic[$27+7] = MapColor[Map]
+
+
+    if (Map == 3)  // moving walls room
+    {
+      Vic[$1d] = 4|32  // enable sprites stretch x
+      Vic[$17] = 8|16  // enable sprites stretch y
+    }
+    else
+    {
+      Vic[$1d] = 0     // disable sprites stretch x
+      Vic[$17] = 0     // disable sprites stretch y
+    }
+
+
+    pos = TreasurePos[Map-3]
+    i = 47 + (((LevelMod9<<2) + ((Map-3)&3))<<2)
+    color = TreasureColor[Map-3]
+    Screen[pos+ 0] = i+0
+    Screen[pos+ 1] = i+1
+    Screen[pos+40] = i+2
+    Screen[pos+41] = i+3
+    c64_color_ram[pos+ 0] = color
+    c64_color_ram[pos+ 1] = color
+    c64_color_ram[pos+40] = color
+    c64_color_ram[pos+41] = color
+
+
+    if (Map == 3)
+      {PlayRumble()}
+    else
+      {PlayMusic(m[(Map-3)&3])}
+  }
+
+  MonsterTimer = 0
+  MonsterAnim = 0
+  MonsterDead = 0
+
+  TreasureCounter = 0
+
+  RoomEventFlag = 0
+
+  PlayerTurnCount = 0
+
+  PushedFlag = 0
+}
+
+
+
+byte MonsterHitsWallMap0To2(byte s)
+{
+  word x1, x2, y
+
+  x1 = (SpriteX[s].hiword - 3) >> 3
+  x2 = (SpriteX[s].hiword + 3) >> 3
+
+  y = (SpriteY[s].hi - 4) >> 3
+  y = (y<<5)+(y<<3)+4  // 40*y+4
+
+  if (Screen[y+x1] | Screen[y+x2] != 0)
+    {return 1}
+
+  y = (SpriteY[s].hi + 3) >> 3
+  y = (y<<5)+(y<<3)+4  // 40*y+4
+
+  if (Screen[y+x1] | Screen[y+x2] != 0)
+    {return 1}
+
+  return 0
+}
+
+
+
+byte MonsterHitsWallMap3To14(byte s)
+{
+  word x1, x2, y
+
+  x1 = (SpriteX[s].hiword - 7) >> 3
+  x2 = (SpriteX[s].hiword + 8) >> 3
+
+  y = (SpriteY[s].hi - 8) >> 3
+  y = (y<<5)+(y<<3)+4  // 40*y+4
+
+  if (Screen[y+x1] | Screen[y+x2] != 0)
+    {return 1}
+
+  y = (SpriteY[s].hi + 7) >> 3
+  y = (y<<5)+(y<<3)+4  // 40*y+4
+
+  if (Screen[y+x1] | Screen[y+x2] != 0)
+    {return 1}
+
+  return 0
+}
+
+
+
+void DisintegrateDeadMonster(byte s)
+{
+  word loc
+  byte i, j
+
+  if (SpriteCount[s] > 0)
+  {
+    SpriteCount[s] -= 1
+  
+    Vic[$C0E] &= (255-1)       // disable interrupts
+    ProcPort[0] &= (255-2)     // RAM visible at $E000-$FFFF
+  
+    loc = word(SpriteShape[s]) << 6
+    i = DissolveData[(SpriteCount[s]<<1) + 0]
+    j = DissolveData[(SpriteCount[s]<<1) + 1]
+    SpriteRAM[loc+i] &= j
+  
+    ProcPort[0] |= 2           // ROM visible at $E000-$FFFF
+    Vic[$C0E] |= 1             // enable interrupts
+  }
+}
+
+
+
+void MonsterChasePlayer(byte s)
+{
+  if (SpriteY[s].hi > SpriteY[0].hi)
+  {
+    if (SpriteX[s].hiword > SpriteX[0].hiword)
+      {SpriteDir[s] = 7}
+    else
+      {SpriteDir[s] = 1}
+  }
+  else
+  {
+    if (SpriteX[s].hiword > SpriteX[0].hiword)
+      {SpriteDir[s] = 5}
+    else
+      {SpriteDir[s] = 3}
+  }
+}
+
+
+
+void MoveHallmonsters()
+{
+  byte s
+  int24 prev_x
+  word  prev_y
+
+  if (HallmonsterFreeze > 0)
+    {HallmonsterFreeze -= 1}
+  else
+  {
+    MonsterAnim += 1
+    if (MonsterAnim == (4 << 4))
+      {MonsterAnim = 0}
+  
+    if (MonsterTimer == 0)
+      {MonsterTimer = 8}
+    else
+      {MonsterTimer -= 1}
+  
+    for s,2,until,7
+    {
+      if (MonsterTimer == 8)
+      {
+        if (SpriteCount[s] == 0 && (GetRandom()&3) == 0)
+          {MonsterChasePlayer(s)}
+        else
+          {SpriteDir[s] = GetRandom() & 7}
+      }
+  
+      prev_x = SpriteX[s]
+      prev_y = SpriteY[s]
+  
+      MoveSpriteX(s, SpriteDir[s], HallmonsterSpeed)
+      MoveSpriteY(s, SpriteDir[s], HallmonsterSpeed)
+  
+      if (MonsterHitsWallMap0To2(s) != 0)
+      {
+        SpriteX[s] = prev_x
+        SpriteY[s] = prev_y
+      }
+  
+      SpriteShape[s] = SmallHallmonsterShapes + MonsterAnimOffset[MonsterAnim >> 4]
+    }
+  }
+}
+
+
+
+byte PlayerPushed(byte s, byte xl, byte xh, byte yl, byte yh)
+{
+  word x
+  byte y
+
+  x = SpriteX[s].hiword
+  y = SpriteY[s].hi
+
+  if (SpriteY[0].hi > y - yl &&
+      SpriteY[0].hi < y + yh)
+  {
+    if (SpriteX[0].hiword > x - (xh-0) &&
+        SpriteX[0].hiword < x - (xh-3))
+    {
+      SpriteX[0].hiword = x - xh
+      SpriteX[0].b0 = 0
+      return 1
+    }
+    else if (SpriteX[0].hiword > x + (xl-3) &&
+             SpriteX[0].hiword < x + (xl-0))
+    {
+      SpriteX[0].hiword = x + xl
+      SpriteX[0].b0 = 0
+      return 1
+    }
+  }
+
+  if (SpriteX[0].hiword > x - xh &&
+      SpriteX[0].hiword < x + xl)
+  {
+    if (SpriteY[0].hi > y - (yl-0) &&
+        SpriteY[0].hi < y - (yl-3))
+    {
+      SpriteY[0].hi = y - yl
+      SpriteY[0].lo = 0
+      return 1
+    }
+    else if (SpriteY[0].hi > y + (yh-3) &&
+             SpriteY[0].hi < y + (yh-0))
+    {
+      SpriteY[0].hi = y + yh
+      SpriteY[0].lo = 0
+      return 1
+    }
+  }
+
+  return 0
+}
+
+
+
+void MoveWalls()
+{
+  MonsterAnim += 1
+  if (MonsterAnim == (4 << 4))
+    {MonsterAnim = 0}
+
+  if (MonsterTimer == 0)
+  {
+    MonsterTimer = MovingWallsCycleTime
+    SpriteDir[2] = 1 - SpriteDir[2]
+  }
+  else
+    {MonsterTimer -= 1}
+
+  if (MonsterTimer >= MovingWallsPauseTime)
+  {
+    if (SpriteDir[2] == 0)
+    {
+      SpriteY[2] -= MovingWallsSpeed
+      SpriteX[3] += MovingWallsSpeed
+      SpriteX[4] -= MovingWallsSpeed
+      SpriteY[5] += MovingWallsSpeed
+    }
+    else
+    {
+      SpriteY[2] += MovingWallsSpeed
+      SpriteX[3] -= MovingWallsSpeed
+      SpriteX[4] += MovingWallsSpeed
+      SpriteY[5] -= MovingWallsSpeed
+    }
+  }
+
+  if (PlayerPushed(3,  4, 20, 18, 30) != 0 ||
+      PlayerPushed(4,  4, 20, 18, 30) != 0 ||
+      PlayerPushed(2, 44, 20, 18,  6) != 0 ||
+      PlayerPushed(5, 44, 20, 18,  6) != 0)
+    {PushedFlag = 1}
+  else
+    {PushedFlag = 0}
+}
+
+
+
+//  a 1   - a    7       -
+//   m     m      m     m
+//  -       3    a -   5 a
+
+void MonsterFleeArrow(byte s)
+{
+  if (SpriteY[s].hi > SpriteY[1].hi)
+  {
+    if (SpriteX[s].hiword > SpriteX[1].hiword)
+    {
+      if (MonsterDodgeSide != 0)
+        {SpriteDir[s] = 1}
+      else
+        {SpriteDir[s] = 5}
+    }
+    else
+    {
+      if (MonsterDodgeSide != 0)
+        {SpriteDir[s] = 3}
+      else
+        {SpriteDir[s] = 7}
+    }
+  }
+  else
+  {
+    if (SpriteX[s].hiword > SpriteX[1].hiword)
+    {
+      if (MonsterDodgeSide != 0)
+        {SpriteDir[s] = 7}
+      else
+        {SpriteDir[s] = 3}
+    }
+    else
+    {
+      if (MonsterDodgeSide != 0)
+        {SpriteDir[s] = 5}
+      else
+        {SpriteDir[s] = 1}
+    }
+  }
+}
+
+
+
+void MoveRoomMonsters()
+{
+  byte s
+  int24 prev_x
+  word  prev_y
+
+  MonsterAnim += 1
+  if (MonsterAnim == (4 << 4))
+    {MonsterAnim = 0}
+
+  if (MonsterTimer == 0)
+    {MonsterTimer = 16}
+  else
+    {MonsterTimer -= 1}
+
+  for s,2,until,7
+  {
+    if ((EnabledSprites & (1<<s)) != 0)
+    {
+      if ((MonsterDead & (1<<s)) != 0)
+        {DisintegrateDeadMonster(s)}
+      else
+      {
+        if (SpriteCount[1] > 1 && SpriteCount[1] < ArrowCountTime-10)
+          {MonsterFleeArrow(s)}
+        else if (MonsterTimer == 16)
+        {
+          if (SpriteCount[s] == 0 && (GetRandom()&3) == 0)
+            {MonsterChasePlayer(s)}
+          else
+            {SpriteDir[s] = GetRandom() & 7}
+        }
+
+        prev_x = SpriteX[s]
+        prev_y = SpriteY[s]
+    
+        MoveSpriteX(s, SpriteDir[s], RoomMonsterSpeed)
+        MoveSpriteY(s, SpriteDir[s], RoomMonsterSpeed)
+    
+        if (MonsterHitsWallMap3To14(s) != 0)
+        {
+          SpriteX[s] = prev_x
+          SpriteY[s] = prev_y
+        }
+
+        SpriteShape[s] = MonsterShape + MonsterAnimOffset[MonsterAnim >> 4]
+      }
+    }
+  }
+}
+
+
+
+void MoveChasingHallmonster()
+{
+  if (HallmonsterCount < HallmonsterAppearTime)
+  {
+    HallmonsterCount += 1
+    if (HallmonsterCount == HallmonsterAppearTime)
+    {
+      EnabledSprites |= 128
+
+      PlayMusic(Music9)
+    }
+  }
+  else
+  {
+    SpriteShape[7] = LargeHallmonsterShapes + ((MonsterAnim>>2)&1)
+
+    if (HallmonsterCount < HallmonsterChaseTime)
+      {HallmonsterCount += 1}
+    else
+    {
+      if (SpriteX[7].hiword > SpriteX[0].hiword)
+        {SpriteX[7] -= HallmonsterChaseSpeed}
+      else
+        {SpriteX[7] += HallmonsterChaseSpeed}
+
+      if (SpriteY[7].hi > SpriteY[0].hi)
+        {SpriteY[7] -= HallmonsterChaseSpeed}
+      else
+        {SpriteY[7] += HallmonsterChaseSpeed}
+    }
+  }
+}
+
+
+
+void MoveMonsters()
+{
+  if (Map < 3)
+    {MoveHallmonsters()}
+  else
+  {
+    if (Map == 3)
+      {MoveWalls()}
+    else
+      {MoveRoomMonsters()}
+
+    MoveChasingHallmonster()
+  }
+}
+
+
+
+// copy dead monster shape to modifiable shape to allow for disintegration effect
+void CopyShape(byte s1, byte s2)
+{
+  word src, des
+  byte i
+
+  Vic[$C0E] &= (255-1)       // disable interrupts
+  ProcPort[0] &= (255-2)     // RAM visible at $E000-$FFFF
+
+  src = word(s1) << 6
+  des = word(s2) << 6
+  for i,0,paralleluntil,3*21
+    {SpriteRAM[des+i] = SpriteRAM[src+i]}
+
+  ProcPort[0] |= 2           // ROM visible at $E000-$FFFF
+  Vic[$C0E] |= 1             // enable interrupts
+}
+
+
+
+// note that monster can be "re-killed" if any remaining bits of sprite are hit by arrow
+void KillMonster(byte s)
+{
+  int24 x
+  word  y
+  byte i
+
+  if (Map == 14 && s == TeleportingMonster)  // random cyclops teleports away when shot
+  {
+    EnabledSprites &= (255-(1<<s))
+
+    i = Map-3
+    i = (i<<1)+(i<<3)  // 2*5*i
+    i += (s-2)<<1
+    x = MonsterStartPosMap3To14[i+0]
+    y = MonsterStartPosMap3To14[i+1]
+    x <<= 8
+    y <<= 8
+    SpriteX[s] = x
+    SpriteY[s] = y
+
+    TeleportingMonster = 255
+  }
+  else
+  {
+    PlaySound(1)
+
+    if ((MonsterDead & (1<<s)) == 0)
+    {
+      MonsterDead |= (1<<s)
+
+      if (TreasureCounter > 0)  // only score when treasure has been picked up
+        {Score100X(1)}
+    }
+
+    SpriteCount[s] = word(16)*16  // for disintegration effect
+    SpriteShape[s] = MonsterDisintegrationShapes+(s-2)  // modifiable sprite shapes
+
+    CopyShape(MonsterShape+3, SpriteShape[s])
+  }
+}
+
+
+
+void PlayerGetsTreasure()
+{
+  word x1, x2, y1, y2
+
+  x1 = (SpriteX[0].hiword - 7) >> 3
+  x2 = (SpriteX[0].hiword + 8) >> 3
+
+  y1 = (SpriteY[0].hi - 8) >> 3
+  y1 = (y1<<5)+(y1<<3)+4           // 40*y1+4
+
+  y2 = (SpriteY[0].hi + 7) >> 3
+  y2 = (y2<<5)+(y2<<3)+4           // 40*y2+4
+
+  if (Screen[y1+x1] >= 47 ||
+      Screen[y1+x2] >= 47 ||
+      Screen[y2+x1] >= 47 ||
+      Screen[y2+x2] >= 47)
+  {
+    TreasureCounter = 32
+
+    PlayMusic(Music6)
+
+    if (Map == 7)                      // two headed room
+      {EnabledSprites |= (4|8|16|32)}
+    else if (Map == 9)                 // spider room
+    {
+      EnabledSprites &= 255-(4|8|16)   // remove red spiders
+      EnabledSprites |= (32|64)        // add yellow spiders
+    }
+    else if (Map == 13)                // genie room
+    {
+      Vic[$27+2] = 3                   // change genie colors to cyan
+      Vic[$27+3] = 3
+      Vic[$27+4] = 3
+    }
+    else if (Map == 14)                // cyclops room
+    {
+      EnabledSprites |= (4|8|16)
+      TeleportingMonster = 255
+    }
+
+    Score100X(2)
+  }
+}
+
+
+
+// not moving wall
+void ArrowHitsWall()
+{
+  byte i
+  word pos
+
+  if (Map >= 3)
+  {
+    i = SpriteDir[1]<<1
+    pos = (SpriteY[1].hi + ArrowCollisionOffset[i+1] - 128) >> 3
+    pos = (pos<<5)+(pos<<3)+4  // 40*pos+4
+    pos += (SpriteX[1].hiword + ArrowCollisionOffset[i+0] - 128) >> 3
+  }
+  else
+  {
+    pos = SpriteY[1].hi >> 3
+    pos = (pos<<5)+(pos<<3)+4  // 40*pos+4
+    pos += SpriteX[1].hiword >> 3
+  }
+
+  if (Screen[pos] != 0)
+    {SpriteCount[1] = 1}  // end of arrow flight
+}
+
+
+
+// set amount to 0 to init
+void GrowArrow(byte amount)
+{
+  word loc
+  byte i, j
+
+  loc = word(SpriteShape[1]) << 6
+
+  if (amount == 0)
+  {
+    GrowArrowDataIndex = GrowArrowDataStart[SpriteDir[1]]
+    for i,0,paralleluntil,63
+      {SpriteRAM[loc+i] = 0}
+    return
+  }
+
+  while (amount != 0)
+  {
+    i = GrowArrowData[GrowArrowDataIndex]
+    if (i == 64)
+      {break}
+    GrowArrowDataIndex += 1
+    if (i == 63)
+      {amount -= 1}
+    else
+    {
+      j = GrowArrowData[GrowArrowDataIndex]
+      GrowArrowDataIndex += 1
+      SpriteRAM[loc+i] = j
+    }
+  }
+}
+
+
+
+void MoveArrow()
+{
+  word dist
+
+  if (SpriteCount[1] == 1)   // last frame of arrow flight
+  {
+    EnabledSprites &= 255-2
+    SpriteCount[1] = 0
+  }
+  else if (SpriteCount[1] == 0)
+  {
+    EnabledSprites |= 2
+
+    SpriteX[1] = SpriteX[0]
+    SpriteY[1] = SpriteY[0]
+
+    SpriteDir[1] = SpriteDir[0]
+
+    if (Map >= 3)
+      {SpriteShape[1] = NockedArrowShapes + SpriteDir[1]}
+    else
+      {SpriteShape[0] = CutoutSmallPlayerShape}
+
+    if ((Joystick[0] & 16) == 0)  // joystick port 2 fire
+    {
+      SpriteCount[1] = ArrowCountTime
+
+      PlaySound(0)
+
+      if (Map >= 3)
+      {
+        MonsterDodgeSide = (GetRandom() & 1)
+
+        SpriteShape[1] = GrowingArrowShape
+        GrowArrow(0)  // init
+      }
+      else
+        {SpriteShape[0] = SmallPlayerShape}
+    }
+  }
+  else
+  {
+    SpriteCount[1] -= 1
+
+    if (Map >= 3)
+    {
+      dist = word(256)*3
+      GrowArrow(1)
+    }
+    else
+      {dist = word(256)*2}
+
+    MoveSpriteX(1, SpriteDir[1], dist)
+    MoveSpriteY(1, SpriteDir[1], dist)
+    ArrowHitsWall()
+  }
+}
+
+
+
+void PlayerEntersRoom(byte dir)
+{
+  int24 x
+  word  y
+  byte i
+
+  if (Map == HallmonsterRoom)
+    {HallmonsterCount = HallmonsterAppearTime-1}
+  else
+  {
+    HallmonsterCount = 0
+    HallmonsterRoom = 255
+  }
+
+  x = SpriteX[0]
+  y = SpriteY[0]
+  TransitionX1 = x
+  TransitionY1 = y
+
+  i = ((Map-3)<<3) + (dir<<1)
+  x = RoomExitPos[i+0]
+  y = RoomExitPos[i+1]
+  x <<= 3
+  y <<= 3
+  i = (dir&3)<<1
+  x += RoomEnterOffset[i+0]
+  y += RoomEnterOffset[i+1]
+  x -= 128
+  y -= 128
+  x <<= 8
+  y <<= 8
+
+  TransitionX2 = x
+  TransitionY2 = y
+  ZoomTransition(0)
+
+  SpriteX[0] = x
+  SpriteY[0] = y
+  SpriteX[1] = x
+  SpriteY[1] = y
+
+  SpriteShape[0] = PlayerShapes + SpriteDir[0]
+  SpriteShape[1] = NockedArrowShapes + SpriteDir[1]
+
+  SetupMap()
+}
+
+
+
+void PlayerLeavesRoom(byte dir)
+{
+  int24 x
+  word  y
+  byte i
+
+  if (HallmonsterCount >= HallmonsterAppearTime)
+    {HallmonsterRoom = Map}
+
+  if (TreasureCounter > 0)
+    {TreasureCollected[LevelMod9] |= (1<<((Map-3)&3))}
+
+  x = SpriteX[0]
+  y = SpriteY[0]
+  TransitionX1 = x
+  TransitionY1 = y
+
+  i = Map-3
+  i = ((i>>2)<<5) + ((i&3)<<3) + (dir<<1)
+  x = RoomEnterPos[i+0]
+  y = RoomEnterPos[i+1]
+  x <<= 3
+  y <<= 3
+  i = dir<<1
+  x += RoomExitOffset[i+0]
+  y += RoomExitOffset[i+1]
+  x -= 128
+  y -= 128
+  x <<= 8
+  y <<= 8
+
+  TransitionX2 = x
+  TransitionY2 = y
+  ZoomTransition(1)
+
+  SpriteX[0] = x
+  SpriteY[0] = y
+  SpriteX[1] = x
+  SpriteY[1] = y
+
+  Map = (Map-3)>>2
+
+  SetupMap()
+}
+
+
+
+// return  0: no hit  1: hit  2: entered/exited room
+// not moving wall
+byte PlayerHitsWall()
+{
+  word x, y, x1, x2, y1, y2
+  byte c, dir, i, j, shape
+
+  x = SpriteX[0].hiword >> 3
+  y = SpriteY[0].hi     >> 3
+
+  c = Screen[(y<<5)+(y<<3)+4+x]  // 40*y+4+x
+
+  if (Map < 3)
+  {
+    if (c == 0)       // floor
+      {return 0}
+    else if (c < 26)  // wall
+      {return 1}
+    else              // hall doors (lrud)
+    {
+      dir = c-26
+      if (dir < 2)
+        {dir = 1-dir}
+      else
+        {dir = 2+3-dir}
+
+      for i,0,until,4
+      {
+        j = (Map<<5) + (i<<3) + (dir<<1)
+        if (x == RoomEnterPos[j+0] && y == 2+RoomEnterPos[j+1])
+        {
+          Map = 3 + (Map<<2) + i
+          PlayerEntersRoom(dir)
+          return 2
+        }
+      }
+    }
+  }
+  else
+  {
+    if (c >= 30 && c < 46)  // room doors (llllrrrruuuudddd)
+    {
+      dir = (c-30)>>2
+      PlayerLeavesRoom(dir)
+      return 2
+    }
+
+    shape = PlayerShapes + SpriteDir[0]
+    shape <<= 2
+
+    x1 = (SpriteX[0].hiword - 11 + SpriteBox[shape+0]) >> 3
+    y1 = (SpriteY[0].hi     - 10 + SpriteBox[shape+2]) >> 3
+    y1 = (y1<<5)+(y1<<3)+4  // 40*y1+4
+
+    c = Screen[y1+x1]
+    if (c > 0 && c < 26)
+      {return 1}
+
+    x2 = (SpriteX[0].hiword - 11 + SpriteBox[shape+1]) >> 3
+
+    c = Screen[y1+x2]
+    if (c > 0 && c < 26)
+      {return 1}
+
+    y2 = (SpriteY[0].hi     - 10 + SpriteBox[shape+3]) >> 3
+    y2 = (y2<<5)+(y2<<3)+4  // 40*y+4
+
+    c = Screen[y2+x1]
+    if (c > 0 && c < 26)
+      {return 1}
+
+    c = Screen[y2+x2]
+    if (c > 0 && c < 26)
+      {return 1}
+  }
+
+  return 0
+}
+
+
+
+void MovePlayer()
+{
+  byte joy, prev_dir, ret
+  int24 prev_x
+  word  prev_y
+
+  if (PlayerTurnCount > 0)
+    {PlayerTurnCount -= 1}
+  else
+  {
+    joy = Joystick[0] & 15  // joystick port 2 direction
+    if (joy != 15)
+    {
+      prev_dir = SpriteDir[0]
+      SpriteDir[0] = JoyToDir[joy]
+      if (SpriteDir[0] != prev_dir && Map >= 3)
+        {PlayerTurnCount = PlayerTurnSpeed}
+
+      if (Map >= 3)
+        {SpriteShape[0] = PlayerShapes + SpriteDir[0]}
+
+      if (PlayerTurnCount == 0)
+      {
+        prev_x = SpriteX[0]
+        MoveSpriteX(0, SpriteDir[0], PlayerSpeed)
+        ret = PlayerHitsWall()
+        if (ret == 1)
+          {SpriteX[0] = prev_x}
+        if (ret != 2)
+        {
+          prev_y = SpriteY[0]
+          MoveSpriteY(0, SpriteDir[0], PlayerSpeed)
+          ret = PlayerHitsWall()
+          if (ret == 1)
+            {SpriteY[0] = prev_y}
+        }
+      }
+    }
+  }
+
+  if (RoomEventFlag == 0)
+  {
+    if (Map == 8 &&
+        (SpriteY[0].hi < 70 || (SpriteX[0].hiword >= 135 && SpriteY[0].hi < 156)))
+    {
+      RoomEventFlag = 1
+      DrawMap(27, 0)
+    }
+
+    if (Map == 11 && SpriteX[0].hiword < 118)
+    {
+      RoomEventFlag = 1
+      EnabledSprites |= (4|8|16)
+    }
+  }
+}
+
+
+
+byte SpritesCollide(byte sprite_col, byte i, byte j)
+{
+  byte bits
+  word s1, s2, c1, c2, c3, c4
+
+  bits = ((1<<i)|(1<<j))
+  if (EnabledSprites & bits == bits && sprite_col & bits == bits)
+  {
+    s1 = SpriteShape[i]
+    s2 = SpriteShape[j]
+
+    // for shapes with no sprite box:
+    //   use nocked arrow shape for sprite's dir
+    //   use source dead monster shape
+
+    if (s1 == GrowingArrowShape)
+      {s1 = NockedArrowShapes + SpriteDir[i]}
+    else if (s1 >= MonsterDisintegrationShapes)
+      {s1 = MonsterShape+3}
+
+    if (s2 == GrowingArrowShape)
+      {s2 = NockedArrowShapes + SpriteDir[j]}
+    else if (s2 >= MonsterDisintegrationShapes)
+      {s2 = MonsterShape+3}
+
+    s1 <<= 2
+    s2 <<= 2
+  
+    c1 = SpriteX[i].hiword + SpriteBox[s1+0]
+    c2 = SpriteX[i].hiword + SpriteBox[s1+1]
+    c3 = SpriteX[j].hiword + SpriteBox[s2+0]
+    c4 = SpriteX[j].hiword + SpriteBox[s2+1]
+  
+    if (c1 > c4 || c3 > c2)
+      {return 0}
+  
+    c1 = SpriteY[i].hi + SpriteBox[s1+2]
+    c2 = SpriteY[i].hi + SpriteBox[s1+3]
+    c3 = SpriteY[j].hi + SpriteBox[s2+2]
+    c4 = SpriteY[j].hi + SpriteBox[s2+3]
+  
+    if (c1 > c4 || c3 > c2)
+      {return 0}
+  
+    return 1
+  }
+  return 0
+}
+
+
+
+byte DoCollisions()
+{
+  byte dead, sprite_col, back_col, s
+
+  dead = 0
+
+  sprite_col = Vic[$1e]
+  back_col   = Vic[$1f]
+
+  if (Map == 3)  // moving walls room
+  {
+    if (PushedFlag != 0 && back_col&1 != 0)
+      {return 1}
+
+    if (sprite_col&3 == 2 && SpriteCount[1] > 1)
+      {SpriteCount[1] = 1}  // end of arrow flight
+  }
+  else
+  {
+    for s,2,until,7
+    {
+      if (SpritesCollide(sprite_col, 0, s) != 0)
+      {
+        dead = GodModeOff
+        break
+      }
+      else if (SpritesCollide(sprite_col, 1, s) != 0)
+      {
+        if (SpriteCount[1] > 1)
+        {
+          if (Map >= 3)
+            {KillMonster(s)}
+          SpriteCount[1] = 1  // end of arrow flight
+        }
+      }
+      else if ((MonsterDead & (1<<s)) == 0)
+      {
+        if (SpriteCount[s] > 0)              // cooldown
+         {SpriteCount[s] -= 1}
+        else if (sprite_col&(1<<s) != 0)     // monsters collide with each other
+        {
+          SpriteDir[s] = (SpriteDir[s]+4)&7  // reverse dir
+          SpriteCount[s] = 8
+        }
+      }
+    }
+  }
+
+  if (Map >= 3 && dead == 0)
+  {
+    s = 7  // chasing hallmonster
+    if (SpritesCollide(sprite_col, 0, s) != 0)
+      {dead = GodModeOff}
+    else if (SpritesCollide(sprite_col, 1, s) != 0)
+    {
+      if (SpriteCount[1] > 1)
+        {SpriteCount[1] = 1}  // end of arrow flight
+    }
+
+    if (back_col&1 != 0 && TreasureCounter == 0 && dead == 0)
+      {PlayerGetsTreasure()}
+  }
+
+  return dead
+}
+
+
+
+void BlinkTreasure()
+{
+  word pos
+  byte color
+
+  if (Map >= 3 && TreasureCounter > 0)
+  {
+    TreasureCounter -= 1
+    if (TreasureCounter == 0)
+      {TreasureCounter = 32}
+
+    if (TreasureCounter < 16)
+      {color = TreasureColor[Map-3]}
+    else
+      {color = 0}
+
+    pos = TreasurePos[Map-3]
+    c64_color_ram[pos+ 0] = color
+    c64_color_ram[pos+ 1] = color
+    c64_color_ram[pos+40] = color
+    c64_color_ram[pos+41] = color
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+// returns num chars printed
+byte PrintText(pointer msg, word pos, byte color)
+{
+  byte i, c
+
+  i = 0
+  while (true)
+  {
+    c = msg[i]
+
+    if (c == nullchar)
+      {break}
+    else if (c == ' ')
+      {c = 0}
+    else if (c >= '0' && c <= '9')
+      {c = 191 + 26 + (c - '0')}
+    else
+      {c = 191 + (c - 'a')}
+
+    Screen[pos+i] = c
+    c64_color_ram[pos+i] = color
+
+    i += 1
+  }
+
+  return i
+}
+
+
+
+// returns num chars printed; ignores 100s place
+word PrintNumberText(byte n, word pos, byte color)
+{
+  const array(byte) msg =
+  [
+    "zero{nullchar}     ", "one{nullchar}      ", "two{nullchar}      ",
+    "three{nullchar}    ", "four{nullchar}     ", "five{nullchar}     ",
+    "six{nullchar}      ", "seven{nullchar}    ", "eight{nullchar}    ",
+    "nine{nullchar}     ", "ten{nullchar}      ", "eleven{nullchar}   ",
+    "twelve{nullchar}   ", "thirteen{nullchar} ", "fourteen{nullchar} ",
+    "fifteen{nullchar}  ", "sixteen{nullchar}  ", "seventeen{nullchar}",
+    "eighteen{nullchar} ", "nineteen{nullchar} ", "twenty{nullchar}   ",
+    "thirty{nullchar}   ", "forty{nullchar}    ", "fifty{nullchar}    ",
+    "sixty{nullchar}    ", "seventy{nullchar}  ", "eighty{nullchar}   ",
+    "ninety{nullchar}   "
+  ]
+
+  word start_pos, d
+
+  start_pos = pos
+
+  if (n >= 200)
+    {n -= 200}
+  else if (n >= 100)
+    {n -= 100}
+
+  if (n < 20)
+    {pos += PrintText(msg+(word(n)<<3)+(word(n)<<1), pos, color)}  // n*10
+  else
+  {
+    n -= 20
+    // n/10, valid for 0-1028 inclusive
+    d = (word(n)+(word(n)<<2)+(word(n)<<3)+(word(n)<<6)+(word(n)<<7))>>11
+    d = (d<<3)+(d<<1)  // d*10
+    n = n-d.lo
+    pos += PrintText(msg+word(10)*20+d, pos, color)
+    if (n > 0)
+      {pos += PrintText(msg+(word(n)<<3)+(word(n)<<1), pos+1, color)}  // n*10
+  }
+
+  return pos - start_pos
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+void SetLevelDiffParams()
+{
+  byte i
+  word speed, time
+
+  i = Level/3
+  if (i > 2)
+    {i = 2}
+  MovingWallsCycleTime = (3*64)>>i
+  MovingWallsPauseTime = (3*16)>>i
+  MovingWallsSpeed     = word(64)<<i
+
+  speed = 128 + word(10)*Level
+  if (speed < 128)
+    {speed = 128}
+  else if (speed > 256+16)
+    {speed = 256+16}
+  HallmonsterSpeed = speed
+  RoomMonsterSpeed = speed
+
+  HallmonsterChaseSpeed = 256
+
+  time = 900 - word(40)*Level
+  if (time < 500)
+    {time = 500}
+  else if (time > 900)
+    {time = 900}
+  HallmonsterAppearTime = time
+  HallmonsterChaseTime  = time + 80
+}
+
+
+
+void NextLevel(byte init)
+{
+  int24 x
+  word  y
+  byte  i
+
+
+  if (init != 0)
+  {
+    Player = 0
+    InitPlayerStates()
+  }
+  else
+  {
+    Level += 1  // wraps back to zero at 256
+
+    LevelMod9 += 1
+    if (LevelMod9 == 9)
+    {
+      LevelMod9 = 0
+      for i,0,until,9
+        {TreasureCollected[i] = 0}
+    }
+
+    BonusTimer = 0
+    BonusMult  = 10
+  }
+
+
+  Map = LevelMod9
+  if (Map >= 6)
+    {Map -= 6}
+  else if (Map >= 3)
+    {Map -= 3}
+
+  SetLevelDiffParams()
+
+  TreasureScreen(init)
+
+  x = word(127) << 8
+  y = word(180) << 8
+  SpriteX[0] = x
+  SpriteY[0] = y
+  SpriteX[1] = x
+  SpriteY[1] = y
+
+  SetupMap()
+
+  HallmonsterRoom = 255
+
+  PrintPlayersScores(MapTextColor[Map])
+  PrintPlayersLives(MapColor[Map])
+}
+
+
+
+void PrintRoomName()
+{
+  const array msg1 = "                      "z
+  const array msg2 = "level"z
+  const array msg3 = "room"z
+
+  byte color
+  word i, pos
+
+  color = MapTextColor[Map]
+
+  if (Map < 3)
+  {
+    pos = (40-22)>>1
+    i = 6 + PrintNumberText(1+Level, pos, 0)
+    PrintText(msg1, pos, 0)
+    pos = (40-i)>>1
+  
+    PrintText(msg2, pos, color)
+    PrintNumberText(1+Level, pos+6, color)
+  }
+  else
+  {
+    pos = (40-22)>>1
+    i = PrintText(MonsterName+word(11)*(Map-3), pos, 0) + 5
+    PrintText(msg1, pos, 0)
+    pos = (40-i)>>1
+  
+    PrintText(MonsterName+word(11)*(Map-3), pos, color)
+    PrintText(msg3, pos+i-4, color)
+  }
+}
+
+
+
+void LevelComplete()
+{
+  const array msg1 = "level complete"z
+  const array msg2 = "              "z
+  const array msg3 = "score this level"z
+  const array msg4 = "bonus multiplier"z
+  const array msg5 = "total bonus"z
+
+  byte i
+  word pos
+  array(byte) bonus[8]
+
+  PlayMusic(Music8)
+
+  pos = word(40)*(2+(22>>1)) + ((40-14)>>1)
+  for i,0,until,3
+  {
+    PrintText(msg1, pos, 3)
+    Pause(15)
+    PrintText(msg2, pos, 3)
+    Pause(15)
+  }
+
+  Pause(1)
+  Vic[$15] = 0  // disable sprites
+  ClearScreen()
+
+  PrintPlayersScores(3)
+  PrintPlayersLives(3)
+
+  pos = word(40)*10+9
+  PrintText(msg3, pos, 1)
+
+  PrintScore(LevelScore, pos+15, 3, 1)  // right justified
+
+  PrintText(msg4, pos+40*2, 1)
+  PrintText(msg5, pos+40*4+5, 1)
+
+  pos = word(40)*13+25
+  for i,0,until,7
+  {
+    Screen       [pos] = 191+26+10+1
+    c64_color_ram[pos] = 3
+    pos += 1
+  }
+
+  pos = word(40)*1+19
+  for i,0,until,10
+  {
+    Screen       [pos] = 191+26+BonusMult
+    c64_color_ram[pos] = 3
+    Pause(3)
+    c64_color_ram[pos] = 0
+    pos += 40
+  }
+
+  pos = word(40)*11+19
+  for i,0,until,13
+  {
+    Screen       [pos] = 191+26+BonusMult
+    c64_color_ram[pos] = 3
+    Pause(3)
+    c64_color_ram[pos] = 0
+    pos += 1
+  }
+
+  pos = word(40)*12+31
+  Screen       [pos  ] = 191+26+BonusMult
+  c64_color_ram[pos  ] = 3
+  Screen       [pos-1] = 191+26+10
+  c64_color_ram[pos-1] = 3
+  Pause(20)
+
+  StopMusic()
+
+  ClearScore(bonus)
+
+  pos = word(40)*14+9+15
+  if (BonusMult == 0)
+  {
+    PrintScore(bonus, pos, 3, 1)  // right justified
+    Pause(20)
+  }
+  else
+  {
+    for i,0,until,BonusMult
+    {
+      PlaySound(6)
+
+      AddScore(bonus, LevelScore)
+
+      PrintScore(bonus, pos, 3, 1)  // right justified
+      Pause(20)
+    }
+  }
+
+  ClearScore(LevelScore)
+
+  ScoreBonus(bonus)
+
+  Pause(word(60)*3)
+
+  Pause(1)
+  ClearScreen()
+  NextLevel(0)
+}
+
+
+
+void PrintBonusTimer()
+{
+  Screen       [40*1+19] = 191+26+BonusMult
+  c64_color_ram[40*1+19] = MapTextColor[Map]
+}
+
+
+
+void DoBonusTimer()
+{
+  if (BonusTimer == 0)
+  {
+    BonusTimer = BonusTimerSpeed
+    if (BonusMult > 0)
+    {
+      BonusMult -= 1
+      PrintBonusTimer()
+    }
+  }
+  else
+    {BonusTimer -= 1}
+}
+
+
+
+void TreasureScreen(byte lost_life)
+{
+  const array msg = "player * get ready"
+
+  byte i, c, color
+  word pos, j
+  int24 x
+  word  y
+
+  Pause(1)
+  Vic[$15] = 0  // disable sprites
+  ClearScreen()
+
+  Vic[$1d] = 0  // disable sprites stretch x
+  Vic[$17] = 0  // disable sprites stretch y
+
+  PrintPlayersScores(3)
+  PrintPlayersLives(3)
+
+  pos = word(40)*3+11
+
+  for i,0,until,5
+  {
+    Screen[pos+120-5+i] = 191+26+10+4+i
+    c64_color_ram[pos+120-5+i] = 3
+  }
+
+  for i,0,until,36
+  {
+    if ((TreasureCollected[i>>2] & (1<<(i&3))) != 0)
+    {
+      c = 47+4*i
+      if (i < 4)
+        {color = 1}
+      else if (i < 20)
+        {color = 4}
+      else
+        {color = 5}
+    }
+    else
+    {
+      c = 191+26+10+9
+      color = 3
+    }
+
+    Screen[pos+ 0] = c+0
+    Screen[pos+ 1] = c+1
+    Screen[pos+40] = c+2
+    Screen[pos+41] = c+3
+
+    c64_color_ram[pos+ 0] = color
+    c64_color_ram[pos+ 1] = color
+    c64_color_ram[pos+40] = color
+    c64_color_ram[pos+41] = color
+
+    if (i == 9-1 || i == 18-1 || i == 27-1)
+      {pos += 80-(18-2)}
+    else
+      {pos += 2}
+  }
+
+  pos = word(40)*22+17
+
+  for i,0,until,5
+  {
+    Screen       [pos   +i] = 240+i
+    c64_color_ram[pos   +i] = 1
+    Screen       [pos+40+i] = 245+i
+    c64_color_ram[pos+40+i] = 1
+  }
+
+  PlayMusic(Music7)
+
+  x = 0
+  y = (word(8)*13+4) << 8
+
+  Vic[$27+0] = 10
+  Vic[$27+1] = 7
+
+  if (lost_life != 0)
+  {
+    SpriteShape[0] = ShrinkingPlayerShapes
+    EnabledSprites = 1
+  }
+  else
+  {
+    SpriteShape[0] = PlayerShapes+2
+    SpriteShape[1] = NockedArrowShapes+2
+    EnabledSprites = 1|2
+  }
+
+  while (true)
+  {
+    if (lost_life != 0)
+      {x += 256*4}
+    else
+      {x += 256*2}
+
+    SpriteX[0] = x
+    SpriteY[0] = y
+    SpriteX[1] = x
+    SpriteY[1] = y
+    PlaceSprites(0)
+
+    if (x.hiword >= 260)
+      {break}
+
+    j = x.hiword
+    j += 30
+    j >>= 3
+    if (j >= 11 && j < 11+18)
+    {
+      j -= 11
+      c = msg[j]
+      if (c == ' ')
+        {c = 0}
+      else if (c == '*')
+      {
+        c = 191+26+1+Player
+        color = 3
+      }
+      else
+      {
+        c = 191+(c - 'a')
+        color = 1
+      }
+      Screen       [word(40)*13+11+j] = c
+      c64_color_ram[word(40)*13+11+j] = color
+    }
+  }
+
+  if (lost_life != 0)
+  {
+    if (Player == 0)
+    {
+      while (true)
+      {
+        if (y.hi <= word(8)*13+4 - 20)
+          {x -= 256*4}
+        y -= 256*4
+  
+        SpriteX[0] = x
+        SpriteY[0] = y
+        PlaceSprites(0)
+  
+        if (y.hi <= 20)
+          {break}
+      }
+  
+      while (true)
+      {
+        x -= 256*4
+  
+        SpriteX[0] = x
+        SpriteY[0] = y
+        PlaceSprites(0)
+  
+        j = x.hiword
+        j += 16
+        if (j <= 0+(Lives<<4))
+          {break}
+      }
+    }
+    else
+    {
+      while (true)
+      {
+        if (x.hiword > 270-(Lives<<4))
+          {x -= 256*4}
+
+        y -= 256*4
+  
+        SpriteX[0] = x
+        SpriteY[0] = y
+        PlaceSprites(0)
+  
+        if (y.hi <= 20)
+          {break}
+      }
+    }
+
+    Lives -= 1
+    PrintPlayersLives(3)
+
+    SpriteX[1] = x
+    SpriteY[1] = y
+    SpriteShape[0] = PlayerShapes+0
+    SpriteShape[1] = NockedArrowShapes+0
+    EnabledSprites |= 2
+    PlaceSprites(0)
+
+    Pause(10)
+
+    if (Player == 0)
+    {
+      while (true)
+      {
+        if (y.hi >= 183-20)
+        {
+          x += 256*4
+          y += 256*4
+          SpriteShape[0] = PlayerShapes+3
+          SpriteShape[1] = NockedArrowShapes+3
+        }
+        else
+        {
+          y += 256*4
+          SpriteShape[0] = PlayerShapes+4
+          SpriteShape[1] = NockedArrowShapes+4
+        }
+  
+        SpriteX[0] = x
+        SpriteY[0] = y
+        SpriteX[1] = x
+        SpriteY[1] = y
+        PlaceSprites(0)
+  
+        if (y.hi >= 183)
+          {break}
+      }
+    }
+    else
+    {
+      while (true)
+      {
+        if (x.hiword >= 10)
+        {
+          x -= 256*4
+          SpriteShape[0] = PlayerShapes+5
+          SpriteShape[1] = NockedArrowShapes+5
+        }
+        else
+        {
+          SpriteShape[0] = PlayerShapes+4
+          SpriteShape[1] = NockedArrowShapes+4
+        }
+        y += 256*4
+  
+        SpriteX[0] = x
+        SpriteY[0] = y
+        SpriteX[1] = x
+        SpriteY[1] = y
+        PlaceSprites(0)
+  
+        if (y.hi >= 183)
+          {break}
+      }
+    }
+  }
+  else
+  {
+    while (true)
+    {
+      if (x.hiword >= 10)
+      {
+        x -= 256*5
+        SpriteShape[0] = PlayerShapes+5
+        SpriteShape[1] = NockedArrowShapes+5
+      }
+      else
+      {
+        SpriteShape[0] = PlayerShapes+4
+        SpriteShape[1] = NockedArrowShapes+4
+      }
+      y += 256*2
+
+      SpriteX[0] = x
+      SpriteY[0] = y
+      SpriteX[1] = x
+      SpriteY[1] = y
+      PlaceSprites(0)
+
+      if (y.hi >= 183)
+        {break}
+    }
+  }
+
+  SpriteShape[0] = PlayerShapes+2
+  SpriteShape[1] = NockedArrowShapes+2
+
+  while (true)
+  {
+    x += 256*4
+
+    SpriteX[0] = x
+    SpriteY[0] = y
+    SpriteX[1] = x
+    SpriteY[1] = y
+    PlaceSprites(0)
+
+    if (x.hiword >= 100)
+      {break}
+  }
+
+  EnabledSprites = 1
+
+  SpriteShape[0] = ShrinkingPlayerShapes
+  PlaceSprites(0)
+  Pause(20)
+
+  x += 256*7
+  SpriteX[0] = x
+  PlaceSprites(0)
+  PlaySound(7)
+  Pause(20)
+
+  x += 256*7
+  SpriteX[0] = x
+  SpriteShape[0] = ShrinkingPlayerShapes+1
+  PlaceSprites(0)
+  PlaySound(7)
+  Pause(20)
+
+  x += 256*7
+  SpriteX[0] = x
+  SpriteShape[0] = ShrinkingPlayerShapes+2
+  PlaceSprites(0)
+  PlaySound(7)
+  Pause(20)
+
+  Pause(1)
+  ClearScreen()
+}
+
+
+
+byte PlayerDied()
+{
+  byte i
+  int24 x
+  word  y
+
+  PlaceSprites(0)
+
+  StopMusic()
+  PlaySound(3)
+
+  for i,0,until,3
+  {
+    Vic[$21] = 2  // background color 0
+    Pause(20)
+    Vic[$21] = 0  // background color 0
+    Pause(20)
+  }
+
+  if (Lives == 0)
+  {
+    PrintGameOver()
+
+#if (HIGH_SCORE_SUPPORT != 0)
+    CheckHighScore()
+#endif
+
+    if (NumPlayers == 1 || (NumPlayers == 2 && SavedLives == 0))
+      {return 1}  // return to title screen
+  }
+
+  if (NumPlayers == 2)
+    {NextPlayer()}
+
+
+  Map = LevelMod9
+  if (Map >= 6)
+    {Map -= 6}
+  else if (Map >= 3)
+    {Map -= 3}
+
+  SetLevelDiffParams()
+
+  TreasureScreen(1)
+
+  x = word(127) << 8
+  y = word(180) << 8
+  SpriteX[0] = x
+  SpriteY[0] = y
+  SpriteX[1] = x
+  SpriteY[1] = y
+
+  SetupMap()
+
+  HallmonsterRoom = 255
+
+  PrintPlayersScores(MapTextColor[Map])
+  PrintPlayersLives(MapColor[Map])
+
+  PrintBonusTimer()
+
+  return 0
+}
+
+
+
+void PrintGameOver()
+{
+  const array msg = "game over"z
+
+  Vic[$15] = 0  // disable sprites
+
+  PrintText(msg, word(40)*13+15, 3)
+  Pause(word(60)*5)
+}
+
+
+
+void PrintNumPlayers()
+{
+  const array msg1 = "one player"z
+  const array msg2 = "two players"z
+
+  byte c1, c2
+
+  if (NumPlayers == 1)
+  {
+    c1 = 7
+    c2 = 15
+  }
+  else
+  {
+    c1 = 15
+    c2 = 7
+  }
+
+  PrintText(msg1, word(40)*17+14, c1)
+  PrintText(msg2, word(40)*18+14, c2)
+}
+
+
+
+void TitleScreen()
+{
+  const array msg1 = "claim your treasures with exidys"z
+  const array msg2 = "use joystick in port 2"z
+  const array msg3 = "c64 version by donnie russell ii"z
+
+  byte i, j
+  int24 x
+  word  y
+
+  Pause(1)
+  Vic[$15] = 0  // disable sprites
+  ClearScreen()
+
+  PrintPlayersScores(3)
+
+  PrintText(msg1, word(40)*3+4, 6)
+  PrintText(msg2, word(40)*21+9, 3)
+  PrintText(msg3, word(40)*24+4, 5)
+
+  Screen       [word(40)*2+35] = 47+18*4+3  // treasure char resembles apostrophe
+  c64_color_ram[word(40)*2+35] = 6
+
+#if (HIGH_SCORE_SUPPORT != 0)
+  PrintHighScores(word(40)*10+7)
+#endif
+
+  x = word(30)<<8
+  y = word(70-24)<<8
+  for i,0,until,7
+  {
+    SpriteX[i] = x
+    SpriteY[i] = y
+    x += word(32)<<8
+    if (i == 6)
+      {SpriteShape[i] = VentureLetterShapes+1}
+    else
+      {SpriteShape[i] = VentureLetterShapes+i}
+
+    Vic[$27+i] = 1+i  // sprite color
+  }
+
+  Vic[$1d] = 1|2|4|8|16|32|64  // enable sprites stretch x
+  Vic[$17] = 1|2|4|8|16|32|64  // enable sprites stretch y
+
+  EnabledSprites = 1|2|4|8|16|32|64
+  PlaceSprites(0)
+
+  for j,0,until,20
+  {
+    for i,0,until,7
+      {Vic[$27+i] = 1+((i+j)&7)}  // sprite color
+    Pause(5)
+  }
+
+  NumPlayers = 1
+  PrintNumPlayers()
+
+  while (true)
+  {
+    if ((Joystick[0] & 16) == 0)
+      {break}
+
+    if ((Joystick[0] & (1|2)) != 1|2)
+    {
+      NumPlayers = 3-NumPlayers
+      PrintNumPlayers()
+      Pause(20)
+    }
+    else {Pause(1)}
+  }
+
+  Vic[$15] = 0  // disable sprites
+  ClearScreen()
+}
+
+
+
+void ZoomTransition(byte dir)
+{
+  int24 dx, x
+  word  dy, y
+  byte dir_x, dir_y, i
+
+  PlaySound(4+dir)
+
+  // clear all but first two lines
+  for i,0,paralleluntil,250
+  {
+    Screen[i+80 ] = 0
+    Screen[i+250] = 0
+    Screen[i+500] = 0
+    Screen[i+750] = 0
+  }
+
+  if (TransitionX1 < TransitionX2)
+  {
+    dx = TransitionX2
+    dx -= TransitionX1
+    dir_x = 1
+  }
+  else
+  {
+    dx = TransitionX1
+    dx -= TransitionX2
+    dir_x = 0
+  }
+  dx >>= 4
+
+  if (TransitionY1 < TransitionY2)
+  {
+    dy = TransitionY2
+    dy -= TransitionY1
+    dir_y = 1
+  }
+  else
+  {
+    dy = TransitionY1
+    dy -= TransitionY2
+    dir_y = 0
+  }
+  dy >>= 4
+
+  EnabledSprites = 1
+
+  x = SpriteX[0]
+  y = SpriteY[0]
+
+  for i,0,until,16
+  {
+    if (dir_x == 0)
+      {x -= dx}
+    else
+      {x += dx}
+
+    if (dir_y == 0)
+      {y -= dy}
+    else
+      {y += dy}
+
+    SpriteX[0] = x
+    SpriteY[0] = y
+
+    if (i >= 4)
+    {
+      if (dir == 0)
+        {SpriteShape[0] = ShrinkingPlayerShapes+3-(i>>2)}
+      else
+        {SpriteShape[0] = ShrinkingPlayerShapes-1+(i>>2)}
+    }
+
+    PlaceSprites(0)
+    Pause(1)
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+void ClearScore(pointer score)
+{
+  byte i
+
+  for i,0,until,8
+    {score[i] = 0}
+}
+
+
+
+void AddScore(pointer score, pointer add)
+{
+  byte i
+
+  for i,0,until,8
+    {score[i] += add[i]}
+
+  for i,0,until,8*2
+  {
+    while (score[i&7] >= 10)
+    {
+      score[i&7] -= 10
+      score[(i+1)&7] += 1
+    }
+  }
+}
+
+
+
+void Score100X(byte mult)
+{
+  array(byte) add[8]
+  byte i, prev, curr
+
+  ClearScore(add)
+  i = 1+Level
+  if (i > 9)
+    {i = 9}
+  add[2] = i*mult
+
+  prev = TotalScore[5]
+  AddScore(TotalScore, add)
+  AddScore(LevelScore, add)
+  curr = TotalScore[5]
+
+  // extra life every 100000 points
+  if (curr > prev)
+  {
+    Lives += curr-prev
+    if (Lives > 6)
+      {Lives = 6}
+
+    PrintPlayersLives(MapColor[Map])
+    PlaySound(2)
+  }
+
+  PrintPlayersScores(MapTextColor[Map])
+}
+
+
+
+void ScoreBonus(pointer bonus)
+{
+  byte prev, curr
+
+  prev = TotalScore[5]
+  AddScore(TotalScore, bonus)
+  curr = TotalScore[5]
+
+  // extra life every 100000 points
+  if (curr > prev)
+  {
+    Lives += curr-prev
+    if (Lives > 6)
+      {Lives = 6}
+
+    PrintPlayersLives(3)
+    PlaySound(2)
+  }
+
+  PrintPlayersScores(3)
+}
+
+
+
+// mode 0: leading 0s  1: right justified
+word PrintScore(pointer score, word pos, byte color, byte mode)
+{
+  byte i, flag
+  word start_pos
+
+  start_pos = pos
+
+  flag = 0
+  for i,8-1,downto,0
+  {
+    if (score[i] != 0 || i == 0)
+      {flag = 1}
+
+    if (flag == 0)
+    {
+      if (mode == 0)
+      {
+        Screen[pos] = 191+26 + 0
+        c64_color_ram[pos] = color
+      }
+      pos += 1
+    }
+    else
+    {
+      Screen[pos] = 191+26 + score[i]
+      c64_color_ram[pos] = color
+      pos += 1
+    }
+  }
+
+  return pos - start_pos
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+void InitPlayerStates()
+{
+  byte i
+
+  Level      = 0
+  SavedLevel = 0
+
+  LevelMod9      = 0
+  SavedLevelMod9 = 0
+
+  for i,0,until,8
+  {
+    TotalScore[i]      = 0
+    SavedTotalScore[i] = 0
+
+    LevelScore[i]      = 0
+    SavedLevelScore[i] = 0
+  }
+
+  Lives      = 3
+  SavedLives = 3
+
+  BonusTimer      = 0
+  SavedBonusTimer = 0
+
+  BonusMult      = 10
+  SavedBonusMult = 10
+
+  for i,0,until,9
+  {
+    TreasureCollected[i]      = 0
+    SavedTreasureCollected[i] = 0
+  }
+}
+
+
+
+void NextPlayer()
+{
+  byte i, b
+  word w
+
+  Player = (Player+1)&1
+
+  b = Level
+  Level = SavedLevel
+  SavedLevel = b
+
+  b = LevelMod9
+  LevelMod9 = SavedLevelMod9
+  SavedLevelMod9 = b
+
+  for i,0,until,8
+  {
+    b = TotalScore[i]
+    TotalScore[i] = SavedTotalScore[i]
+    SavedTotalScore[i] = b
+
+    b = LevelScore[i]
+    LevelScore[i] = SavedLevelScore[i]
+    SavedLevelScore[i] = b
+  }
+
+  b = Lives
+  Lives = SavedLives
+  SavedLives = b
+
+  w = BonusTimer
+  BonusTimer = SavedBonusTimer
+  SavedBonusTimer = w
+
+  b = BonusMult
+  BonusMult = SavedBonusMult
+  SavedBonusMult = b
+
+  for i,0,until,9
+  {
+    b = TreasureCollected[i]
+    TreasureCollected[i] = SavedTreasureCollected[i]
+    SavedTreasureCollected[i] = b
+  }
+}
+
+
+
+void PrintPlayersScores(byte color)
+{
+  pointer score0, score1
+
+  if (Player == 0)
+  {
+    score0 = TotalScore
+    score1 = SavedTotalScore
+  }
+  else
+  {
+    score0 = SavedTotalScore
+    score1 = TotalScore
+  }
+
+  PrintScore(score0,      1, color, 0)  // leading 0s
+  PrintScore(score1, 40-1-8, color, 0)  // leading 0s
+}
+
+
+
+void PrintPlayersLives(byte color)
+{
+  byte n0, n1, i
+
+  if (Player == 0)
+  {
+    n0 = Lives
+    n1 = SavedLives
+  }
+  else
+  {
+    n0 = SavedLives
+    n1 = Lives
+  }
+
+  n0 <<= 1
+  n1 <<= 1
+
+  for i,0,until,n0
+  {
+    Screen       [40+3+i] = 191+26+10+2+(i&1)
+    c64_color_ram[40+3+i] = color
+  }
+  for i,n0,until,2*6
+    {Screen[40+3+i] = 0}
+
+  for i,0,until,2*6-n1
+    {Screen[80-3-(2*6)+i] = 0}
+  for i,2*6-n1,until,2*6
+  {
+    Screen       [80-3-(2*6)+i] = 191+26+10+2+(i&1)
+    c64_color_ram[80-3-(2*6)+i] = color
+  }
+}
+
+//*****************************************************************************
+
+
+
+//*****************************************************************************
+
+#if (HIGH_SCORE_SUPPORT != 0)
+
+
+
+array(byte) Initials[3]
+
+
+
+void PrintInitials(pointer initials, word pos)
+{
+  byte i, c
+
+  for i,0,until,3
+  {
+    c = initials[i]
+
+    if (c == 28)
+      {c = 0}
+    else if (c >= 26)
+      {c += 250-26}
+    else
+      {c += 191}
+  
+    Screen[pos+i] = c
+    c64_color_ram[pos+i] = 1
+  }
+}
+
+
+
+void GetInitials()
+{
+  const array msg1 = "player"z
+  const array msg2 = "one"z
+  const array msg3 = "two"z
+  const array msg4 = "high score enter your initials"z
+  const array msg5 = "with your bow and arrow"z
+
+  byte i, col, row, cursor
+  word pos
+  int24 x
+  word  y
+
+  Pause(1)
+  Vic[$15] = 0  // disable sprites
+  ClearScreen()
+
+  Vic[$1d] = 0  // disable sprites stretch x
+  Vic[$17] = 0  // disable sprites stretch y
+
+  pos = 40+6
+  for i,0,until,26
+  {
+    Screen[pos] = 191+i
+    c64_color_ram[pos] = 1
+    if (i == 9 || i == 19)
+      {pos += 40*6-27}
+    else
+      {pos += 3}
+  }
+  Screen[pos] = 250+0
+  c64_color_ram[pos] = 3
+  pos += 3
+  Screen[pos] = 250+1
+  c64_color_ram[pos] = 3
+  pos += 3
+  Screen[pos] = 191 + ('b' - 'a')
+  c64_color_ram[pos] = 1
+  Screen[pos-40] = 191 + ('u' - 'a')
+  c64_color_ram[pos-40] = 1
+  Screen[pos-40*2] = 191 + ('r' - 'a')
+  c64_color_ram[pos-40*2] = 1
+  pos += 3
+  Screen[pos] = 191 + ('d' - 'a')
+  c64_color_ram[pos] = 1
+  Screen[pos-40] = 191 + ('n' - 'a')
+  c64_color_ram[pos-40] = 1
+  Screen[pos-40*2] = 191 + ('e' - 'a')
+  c64_color_ram[pos-40*2] = 1
+
+  pos = word(40)*19+15
+  PrintText(msg1, pos, 1)
+  if (Player == 0)
+    {PrintText(msg2, pos+7, 1)}
+  else
+    {PrintText(msg3, pos+7, 1)}
+
+  PrintText(msg4, word(40)*21+5, 1)
+  PrintText(msg5, word(40)*23+9, 1)
+
+  Vic[$27+0] = 10
+  Vic[$27+1] = 7
+
+  SpriteDir[0] = 0
+  SpriteDir[1] = 0
+
+  SpriteShape[0] = PlayerShapes+0
+  SpriteShape[1] = GrowingArrowShape
+  EnabledSprites = 1|2
+
+  GrowArrow(0)
+  GrowArrow(4)
+
+  x = (word(8)*2+2) << 8
+  y = (word(8)*3+5) << 8
+
+  SpriteX[0] = x
+  SpriteY[0] = y
+  SpriteX[1] = x
+  SpriteY[1] = y - (word(3) << 8)
+  PlaceSprites(0)
+
+  col = 0
+  row = 0
+
+  Initials[0] = 28
+  Initials[1] = 28
+  Initials[2] = 28
+
+  cursor = 0
+
+  pos = word(40)*17+18
+
+  while (true)
+  {
+    if ((Joystick[0] & 16) == 0)
+    {
+      i = 10*row+col
+      if (i == 29)
+        {break}
+      else if (i == 28)
+      {
+        if (cursor > 0)
+        {
+          cursor -= 1
+          Initials[cursor] = 28
+          PrintInitials(Initials, pos)
+        }
+      }
+      else
+      {
+        if (cursor < 3)
+        {
+          Initials[cursor] = i
+          cursor += 1
+          PrintInitials(Initials, pos)
+        }
+      }
+      while ((Joystick[0] & 16) == 0)
+        {Pause(1)}
+    }
+
+    if ((Joystick[0] & 4) == 0 && col > 0)
+    {
+      col -= 1
+      for i,0,until,8
+      {
+        SpriteX[0] -= word(3)<<8
+        SpriteX[1] -= word(3)<<8
+        PlaceSprites(0)
+      }
+    }
+    if ((Joystick[0] & 8) == 0 && col < 9)
+    {
+      col += 1
+      for i,0,until,8
+      {
+        SpriteX[0] += word(3)<<8
+        SpriteX[1] += word(3)<<8
+        PlaceSprites(0)
+      }
+    }
+    if ((Joystick[0] & 1) == 0 && row > 0)
+    {
+      row -= 1
+      for i,0,until,16
+      {
+        SpriteY[0] -= word(3)<<8
+        SpriteY[1] -= word(3)<<8
+        PlaceSprites(0)
+      }
+    }
+    if ((Joystick[0] & 2) == 0 && row < 2)
+    {
+      row += 1
+      for i,0,until,16
+      {
+        SpriteY[0] += word(3)<<8
+        SpriteY[1] += word(3)<<8
+        PlaceSprites(0)
+      }
+    }
+
+    Pause(1)
+  }
+
+  Vic[$15] = 0  // disable sprites
+  ClearScreen()
+}
+
+
+
+//-----------------------------------------------------------------------------
+
+
+
+// (score: 8 bytes + initials: 3 bytes) * 5 entries
+array(byte) HighScores[55] =
+[
+  0,9,9,1,2,1,0,0, 'd' - 'a', 'j' - 'a', 's' - 'a',
+  0,4,4,3,8,0,0,0, 'v' - 'a', 'i' - 'a', 'c' - 'a',
+  0,3,1,2,6,0,0,0, 'm' - 'a', 'c' - 'a', 'h' - 'a',
+  0,3,8,1,6,0,0,0, 'm' - 'a', 'r' - 'a', 'k' - 'a',
+  0,5,6,7,4,0,0,0, 'h' - 'a', 'a' - 'a', 'i' - 'a'
+]
+
+const array HighScoresFilename = "high scores"z
+
+
+
+byte SaveHighScores()
+{
+  const array msg = "saving high scores"z
+
+  PrintText(msg, word(40)*12+11, 1)
+
+  delete_file(8, HighScoresFilename)
+  save_file(8, HighScoresFilename, HighScores, 55)
+  if (errno != err_ok)
+    {return 0}
+  return 1
+}
+
+
+
+// 0:less  1:equal  2:greater
+byte CompareScores(pointer s1, pointer s2)
+{
+  byte i
+
+  for i,8-1,downto,0
+  {
+    if (s1[i] > s2[i])
+      {return 2}
+    else if (s1[i] < s2[i])
+      {return 0}
+	}
+  return 1
+}
+
+
+
+void OverwriteScore(pointer h)
+{
+  byte i
+
+  for i,0,until,8
+    {h[i] = TotalScore[i]}
+
+  for i,0,until,3
+    {h[8+i] = Initials[i]}
+
+  SaveHighScores()
+}
+
+
+
+void InsertHighScore(pointer h)
+{
+  pointer insert
+  byte i
+
+  insert = h
+  h = HighScores + 55-11-1
+
+  while (h >= insert)
+  {
+    h[11] = h[0]
+    h -= 1
+  }
+
+  OverwriteScore(insert)
+}
+
+
+
+void RegisterHighScore()
+{
+  pointer h
+  byte i, compare
+
+  h = HighScores
+
+  for i,0,until,5
+  {
+    compare = CompareScores(TotalScore, h)
+
+    if (h[8+0] == Initials[0] &&
+        h[8+1] == Initials[1] &&
+        h[8+2] == Initials[2])
+    {
+      if (compare > 1)
+        {OverwriteScore(h)}
+      return
+    }
+    else if (compare >= 1)
+    {
+      InsertHighScore(h)
+      return
+    }
+
+    h += 11
+  }
+}
+
+
+
+//-----------------------------------------------------------------------------
+
+
+
+byte LoadHighScores()
+{
+  load_file_at(8, HighScoresFilename, HighScores)
+  if (errno != err_ok)
+    {return 0}
+  return 1
+}
+
+
+
+void PrintHighScores(word pos)
+{
+  const array(byte) msg =
+  [
+    "wizard{nullchar}  ",
+    "warrior{nullchar} ",
+    "sorcerer{nullchar}",
+    "fighter{nullchar} ",
+    "explorer{nullchar}"
+  ]
+
+  byte i
+  pointer h, m
+
+  h = HighScores
+  m = msg
+
+  for i,0,until,5
+  {
+    PrintInitials(h+8, pos)
+
+    Screen[pos+4] = 191+26+10+1
+    c64_color_ram[pos+4] = 3
+
+    PrintScore(h, pos+6, 3, 1)  // right justified
+    h += 11
+
+    Screen[pos+15] = 191+26+10+1
+    c64_color_ram[pos+15] = 3
+
+    PrintText(m, pos+17, 1)
+    m += 9
+
+    pos += 40
+  }
+}
+
+
+
+void CheckHighScore()
+{
+  pointer h
+  byte i
+
+  h = HighScores
+
+  for i,0,until,5
+  {
+    if (CompareScores(TotalScore, h) >= 1)
+    {
+      GetInitials()
+      RegisterHighScore()
+      return
+    }
+
+    h += 11
+  }
+}
+
+
+
+#endif
+
+//*****************************************************************************
+
+
+
+//#############################################################################
+
+void main()
+{
+  InitVic()
+  ClearSID()
+  InitMusic()
+  InitSound()
+  InitRandom()
+
+#if (HIGH_SCORE_SUPPORT != 0)
+  LoadHighScores()
+#endif
+
+  Player = 0
+  InitPlayerStates()
+
+label RESTART
+
+  TitleScreen()
+
+  NextLevel(1)  // 1:init
+
+  while (true)
+  {
+    DoBonusTimer()
+
+    PlaceSprites(30)
+
+    if (DoCollisions() != 0)
+    {
+      if (PlayerDied() != 0)
+        {goto RESTART}
+      continue
+    }
+
+    MovePlayer()
+
+    if (Map < 3 && TreasureCollected[LevelMod9] == (1|2|4|8))
+    {
+      StopMusic()
+      LevelComplete()
+      continue
+    }
+
+    MoveArrow()
+    MoveMonsters()
+    BlinkTreasure()
+  }
+
+  while (true)  // not reached
+    {}
+}
+
+//#############################################################################

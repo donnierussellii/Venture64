@@ -1,0 +1,3 @@
+gcc generate_data.cpp -o generate_data
+
+millfork -Xr -t c64 -o venture Venture64.mfk
